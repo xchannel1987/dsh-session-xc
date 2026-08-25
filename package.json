@@ -1,0 +1,33 @@
+{
+  "name": "dsh-session-xc",
+  "version": "0.2.7",
+  "description": "DSH web plugin: 工作区可见会话数(覆盖层徽标) + 已归档会话入口与恢复（官方归档图标、N=0 隐藏、恢复 toast）。",
+  "type": "module",
+  "main": "lib/index.js",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection"
+      ]
+    }
+  },
+  "license": "MIT"
+}

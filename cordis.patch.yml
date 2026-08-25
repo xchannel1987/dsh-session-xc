@@ -1,0 +1,4 @@
+# dsh-session-xc bundle patch（加载单插件：侧边栏工作区可见会话数）
+- insert:
+    - id: dsh-session-xc
+      name: dsh-session-xc
