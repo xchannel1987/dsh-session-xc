@@ -37,7 +37,7 @@ dsh-session-xc/
 ```powershell
 cd D:\workspace\dsh-session-xc
 .\build.ps1
-dsh plugin --profile web add "dsh-session-xc@file:D:\workspace\dsh-session-xc\dsh-session-xc-0.2.10.tgz"
+dsh plugin --profile web add "dsh-session-xc@file:D:\workspace\dsh-session-xc\dsh-session-xc-0.2.11.tgz"
 # 然后手动重启 dsh web（电源按钮或命令行）
 ```
 
@@ -54,3 +54,4 @@ dsh plugin --profile web remove dsh-session-xc
 - `session.list` 不可用时退化为"仅按归档过滤"，子代理挂账场景下数字可能略大。
 - 同名工作区（标题可重复）会显示同一计数，后续可升级为按行序/workspaceId 精确关联。
 - 归档按钮的 tooltip 复用官方 primitives `Tooltip`（side=bottom / delayMs=500），与 GUI 其它图标按钮提示一致；按钮为 React 渲染，官方重渲染行时由 rAF 同帧重插恢复。
+- 已归档会话面板：PC（视口宽度 >= 768px）使用居中 modal，包含遮罩、标题区、滚动列表和显式“恢复”按钮；点击行主体不恢复，恢复中按钮会禁用。遮罩、关闭按钮和 Esc 均可关闭。移动端继续使用原有小浮层和整行恢复行为。
