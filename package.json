@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-xc",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "DSH web plugin: 工作区可见会话数 + 已归档会话入口与恢复（配置：\"会话增强\"设置卡片，可开关徽标/归档按钮）。",
   "type": "module",
   "main": "lib/index.js",

@@ -7,7 +7,8 @@ DSH 客户端插件：为侧边栏工作区列表提供会话相关小工具。
 工作区名称旁显示**可见会话数**，如 `requirements (3)`：
 
 - 显示位置：左侧工作区列表，每个工作区名称旁（半角括号）；
-- 计数口径：**挂账可见** = 工作区 `sessionIds` 中 非归档（`archivedSessionIds`）且 非子代理（`origin !== "subagent"`）的会话数，与展开该工作区后侧边栏实际显示的行数一致；
+- 计数口径：**挂账可见** = 工作区 `sessionIds` 中 非归档（`archivedSessionIds`）、非子代理（`origin !== "subagent"`）、且 blank 会话仅当前会话计入（官方 `sessionVisible` 同款规则）的会话数，与展开该工作区后侧边栏实际显示的行数一致；
+- 当前会话 id 读取官方持久化选择 `localStorage["dsh.sessions.current"]`（`SessionRuntime.selection` 的副本，即官方 `list.current` 的来源）；
 - 可见会话数为 0 时**不显示**括号；
 - 数据来源：RPC `workspace.list`（官方，无需改后端）；5s 轮询 + 页面可见时即时刷新，随新建/归档/删除会话自动更新。
 
@@ -36,7 +37,7 @@ dsh-session-xc/
 ```powershell
 cd D:\workspace\dsh-session-xc
 .\build.ps1
-dsh plugin --profile web add "dsh-session-xc@file:D:\workspace\dsh-session-xc\dsh-session-xc-0.1.0.tgz"
+dsh plugin --profile web add "dsh-session-xc@file:D:\workspace\dsh-session-xc\dsh-session-xc-0.2.10.tgz"
 # 然后手动重启 dsh web（电源按钮或命令行）
 ```
 
@@ -52,3 +53,4 @@ dsh plugin --profile web remove dsh-session-xc
 - 依赖官方工作区行的稳定结构（role/aria-expanded/标题文本）；官方重构该结构后需回归适配。
 - `session.list` 不可用时退化为"仅按归档过滤"，子代理挂账场景下数字可能略大。
 - 同名工作区（标题可重复）会显示同一计数，后续可升级为按行序/workspaceId 精确关联。
+- 归档按钮的 tooltip 复用官方 primitives `Tooltip`（side=bottom / delayMs=500），与 GUI 其它图标按钮提示一致；按钮为 React 渲染，官方重渲染行时由 rAF 同帧重插恢复。
