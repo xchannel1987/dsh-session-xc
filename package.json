@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-xc",
-  "version": "0.5.3",
+  "version": "0.6.9",
   "description": "DSH web plugin: 工作区可见会话数 + 已归档会话入口与恢复/删除 + 跨工作区移动会话（配置：\"会话增强\"设置卡片）。",
   "type": "module",
   "main": "lib/index.js",
