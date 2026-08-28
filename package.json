@@ -6,6 +6,7 @@
   "main": "lib/index.js",
   "files": [
     "lib",
+    "src",
     "cordis.patch.yml",
     "README.md",
     "README_EN.md",
@@ -58,5 +59,14 @@
   ],
   "engines": {
     "node": ">=18"
+  },
+  "scripts": {
+    "build": "npm run build:host && npm run build:client",
+    "build:host": "esbuild src/index.js --bundle --platform=node --format=esm --outfile=lib/index.js",
+    "build:client": "esbuild src/client.js --bundle --platform=browser --format=iife --outfile=lib/client.js --external:react",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
   }
 }
