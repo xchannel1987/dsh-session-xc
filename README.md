@@ -1,5 +1,10 @@
 # dsh-session-xc
 
+[![npm version](https://img.shields.io/npm/v/dsh-session-xc.svg)](https://www.npmjs.com/package/dsh-session-xc)
+[![license](https://img.shields.io/npm/l/dsh-session-xc.svg)](https://github.com/keyiadiannao/dsh-session-xc/blob/main/LICENSE)
+[![downloads](https://img.shields.io/npm/dm/dsh-session-xc.svg)](https://www.npmjs.com/package/dsh-session-xc)
+
+
 DSH 客户端插件：为侧边栏工作区列表提供会话相关小工具。
 
 ## 功能
