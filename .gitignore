@@ -7,6 +7,12 @@ node_modules/
 # Logs
 *.log
 
+# 备份文件
+*.bak-*
+
 # 本地安装源：profile 注册的是 file:.../dsh-session-xc-*.tgz，
 # tgz 必须入库（git 管理），否则删了就无法重装插件。
 !dsh-session-xc-*.tgz
+
+# 项目本地说明文档（不入库）
+CLAUDE.md
