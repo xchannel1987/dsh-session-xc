@@ -1,96 +1,108 @@
 # dsh-session-xc
 
 [![npm version](https://img.shields.io/npm/v/dsh-session-xc.svg)](https://www.npmjs.com/package/dsh-session-xc)
-[![license](https://img.shields.io/npm/l/dsh-session-xc.svg)](https://github.com/keyiadiannao/dsh-session-xc/blob/main/LICENSE)
+[![license](https://img.shields.io/npm/l/dsh-session-xc.svg)](https://github.com/xchannel1987/dsh-session-xc/blob/main/LICENSE)
 [![downloads](https://img.shields.io/npm/dm/dsh-session-xc.svg)](https://www.npmjs.com/package/dsh-session-xc)
+[![DSH](https://img.shields.io/badge/DeepSeek-Harness-blue)](https://github.com/deepseek-ai/DeepSeek-Harness)
 
+[中文](README.md) | [English](README_EN.md)
 
-DSH 客户端插件：为侧边栏工作区列表提供会话相关小工具。
+**DSH 会话管理增强插件** —— 为侧边栏工作区提供更强大的会话管理功能，包括统计展示、归档恢复、删除和跨工作区移动。
 
-## 功能
+## ✨ 核心特性
 
-### 功能 1：工作区会话数展示
+### 📊 会话数统计展示
+在工作区名称旁显示会话数量统计：
 
-工作区名称旁和工作区抽屉标题后显示**可见会话数**和**已完成未读会话数**，如 `requirements (2/3)`：
+| 格式 | 含义 |
+|------|------|
+| `(3)` | 3 个活跃会话 |
+| `(2/3)` | 2 个未读完成会话 / 3 个活跃会话 |
 
-- 显示位置：左侧工作区列表，每个工作区名称旁（半角括号）；
-- **可见会话数（活跃）**：工作区 `sessionIds` 中 非归档、非子代理、且 blank 会话仅当前会话计入的会话数，与展开该工作区后侧边栏实际显示的行数一致；
-- **已完成未读会话数**：可见会话中 `completed === true` 的会话数（即会话行前的绿色点，表示已完成运行但未被查看的会话）；显示时用绿色数字标识；
-- **显示格式**：
-  - 无已完成未读：`(3)` - 只显示活跃会话数
-  - 有已完成未读：`(2/3)` - 2 是未读数（绿色），3 是活跃数
-- **工作区抽屉标题**：也显示所有工作区的汇总统计，格式相同；
-- 当前会话 id 读取官方持久化选择 `localStorage["dsh.sessions.current"]`；
-- 数量都为 0 时**不显示**括号；
-- 数据来源：订阅 DSH 核心的 `workspaces.list` 和 `sessions.list` store
+- **活跃会话**：非归档、非子代理的可见会话
+- **未读完成**：已完成运行但未查看的会话（绿色数字）
+- **抽屉汇总**：工作区抽屉标题也显示汇总统计
 
-### 功能 2：已归档会话入口与恢复
+### 📁 归档会话管理
+- **归档入口**：工作区操作区显示归档按钮
+- **归档面板**：点击查看所有已归档会话
+- **一键恢复**：PC 端点击「恢复」按钮，移动端点击整行
 
-- 工作区操作区显示归档按钮（有归档会话时）
-- 点击归档按钮打开归档面板
-- **PC 端**：每个会话有「恢复」按钮
-- **移动端**：点击整行即恢复
+### 🗑️ 永久删除
+安全删除已归档会话，释放存储空间：
 
-### 功能 3：删除已归档会话
+- **PC 端**：红色「删除」按钮 + 确认对话框
+- **移动端**：左滑显示删除按钮 + 确认对话框
+- **安全清理**：删除后会话文件被永久移除
 
-在归档面板中永久删除已归档的会话，释放存储空间：
+### 🔀 跨工作区移动
+拖拽会话到目标工作区实现移动：
 
-- **PC 端**：每个会话有「删除」按钮（红色），点击后弹出确认对话框
-- **移动端**：左滑显示删除按钮，点击后弹出确认对话框
-- 删除后会话文件被永久删除，无法恢复；同步期间保留工作区归属占位，避免残留摘要进入未分组列表
+- **拖拽指示**：进入有效目标时高亮显示
+- **二次确认**：释放前弹出确认对话框
+- **自动归类**：移动后自动更新工作区归属
 
-### 功能 4：跨工作区移动会话
+## 📦 安装
 
-拖拽会话行到目标工作区或该工作区下的任意会话行，实现跨工作区移动会话（可在设置中关闭）；拖拽进入有效目标时显示高亮指示，释放前会弹出二次确认。客户端复用官方拖拽的 `dataTransfer.text/plain` 会话 ID，服务端以工作区 `sessionIds` 查找源工作区，缺少运行时路径时回退到会话 header.cwd。
+```bash
+# 使用 DSH CLI
+dsh plugin --profile web add dsh-session-xc
 
----
-
-## 详细说明
-
-### 功能 1：工作区可见会话数
-
-- 数据来源：RPC `workspace.list`（官方，无需改后端）；5s 轮询 + 页面可见时即时刷新，随新建/归档/删除会话自动更新。初始化刷新期间等待完整会话基线和全部挂账会话摘要就绪后再展示数量。
-
-## 结构
-
-```
-dsh-session-xc/
-├── package.json      # dsh.bundle.patch + dsh.client(platform/inject) 声明
-├── cordis.patch.yml  # insert 加载服务端 bundle
-├── lib/
-│   ├── index.js      # 服务端最小 cordis 插件（承载 bundle 加载）
-│   └── client.js     # 客户端：workspace.list + session.list → DOM 注入 (N) 徽标
-├── build.ps1         # npm pack → tgz
-└── README.md
+# 或使用 npm
+npm install dsh-session-xc
 ```
 
-## 实现要点
+安装后重启 DSH，侧边栏工作区列表将显示增强功能。
 
-- 官方 `dsh-client-ui-workspace` 无行级 slot（`sidebar.workspaces` 为 single、内部仅 directoryFlow），故采用 **DOM 注入**：
-  - 行定位：`[role="treeitem"][aria-expanded]`（官方 `ProjectRowItem` 的稳定属性，不依赖带 hash 的 CSS module 类名）；
-  - 标题 span：行内唯一无子元素且文本等于行标题的 span，其后插入 `<span data-dstk-workspace> (N)</span>`；
-  - 重建：MutationObserver（body subtree，debounce 300ms）幂等重建；`data-dstk-workspace` 防重复。
+## ⚙️ 配置
 
-## 构建与安装
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| showSessionCount | true | 显示会话数统计 |
+| enableDragMove | true | 启用拖拽移动功能 |
 
-```powershell
-cd D:\workspace\dsh-session-xc
-.\build.ps1
-dsh plugin --profile web add "dsh-session-xc@file:D:\workspace\dsh-session-xc\dsh-session-xc-0.2.11.tgz"
-# 然后手动重启 dsh web（电源按钮或命令行）
-```
+## 🎮 使用指南
 
-## 卸载
+### 查看会话统计
+- 查看工作区名称旁的数字
+- 展开工作区查看详细信息
+- 绿色数字表示未读完成的会话
 
-```powershell
-dsh plugin --profile web remove dsh-session-xc
-# 重启 dsh web
-```
+### 恢复归档会话
+1. 点击工作区旁的归档按钮（文件夹图标）
+2. 在归档面板中找到目标会话
+3. 点击「恢复」按钮
 
-## 已知边界
+### 删除归档会话
+1. 在归档面板中找到目标会话
+2. PC 端点击红色「删除」按钮
+3. 移动端左滑后点击「删除」
+4. 确认删除
 
-- 依赖官方工作区行的稳定结构（role/aria-expanded/标题文本）；官方重构该结构后需回归适配。
-- `session.list` 不可用时退化为"仅按归档过滤"，子代理挂账场景下数字可能略大。
-- 同名工作区（标题可重复）会显示同一计数，后续可升级为按行序/workspaceId 精确关联。
-- 归档按钮的 tooltip 复用官方 primitives `Tooltip`（side=bottom / delayMs=500），与 GUI 其它图标按钮提示一致；按钮为 React 渲染，并使用稳定 mount 标识去重，官方重渲染行时由 rAF 同帧恢复。
-- 已归档会话面板：PC（视口宽度 >= 768px）使用居中 modal，包含遮罩、标题区、滚动列表和显式“恢复”按钮；点击行主体不恢复，恢复中按钮会禁用。遮罩、关闭按钮和 Esc 均可关闭。移动端继续使用原有小浮层和整行恢复行为；面板挂载在 body，并在 window 捕获阶段拦截官方 outside-pointer 关闭事件，恢复/删除后保持工作区抽屉和归档列表打开，最后一项显示空状态；操作期间保持移动端工作区抽屉和归档面板打开。
+### 移动会话到其他工作区
+1. 长按会话行开始拖拽
+2. 拖到目标工作区或该工作区下的会话
+3. 目标高亮时释放
+4. 确认移动
+
+## 🔧 数据来源
+
+- **工作区数据**：RPC `workspace.list`
+- **会话数据**：RPC `sessions.list`
+- **轮询刷新**：5 秒间隔 + 页面可见时即时刷新
+
+## 📱 移动端适配
+
+- **触摸友好**：44px 最小触控区域
+- **滑动手势**：左滑显示删除按钮
+- **响应式布局**：自动适配不同屏幕尺寸
+
+## 📄 许可证
+
+[MIT](LICENSE)
+
+## 🔗 链接
+
+- [GitHub](https://github.com/xchannel1987/dsh-session-xc)
+- [npm](https://www.npmjs.com/package/dsh-session-xc)
+- [问题反馈](https://github.com/xchannel1987/dsh-session-xc/issues)
