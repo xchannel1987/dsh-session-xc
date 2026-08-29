@@ -41,12 +41,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/keyiadiannao/dsh-session-xc.git"
+    "url": "git+https://github.com/xchannel1987/dsh-session-xc.git"
   },
   "bugs": {
-    "url": "https://github.com/keyiadiannao/dsh-session-xc/issues"
+    "url": "https://github.com/xchannel1987/dsh-session-xc/issues"
   },
-  "homepage": "https://github.com/keyiadiannao/dsh-session-xc#readme",
+  "homepage": "https://github.com/xchannel1987/dsh-session-xc#readme",
   "publishConfig": {
     "access": "public"
   },
