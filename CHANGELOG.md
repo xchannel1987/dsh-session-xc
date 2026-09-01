@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.8] - 2026-09-01
+
+### Fixed
+- 拖拽会话校验：仅当 transfer 中 id 是 sessions store 真实会话 id 时才处理移动，避免工作区行拖拽（官方同样写入 text/plain）被误判为会话移动。
+
 ## [0.7.7] - 2026-09-01
 
 ### Fixed
