@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.7] - 2026-09-01
+
+### Fixed
+- 声明 `sessions` / `workspaces` 为客户端注入服务（对齐官方 dsh-client-ui-workspace 模式），修复 `ctx.get` 取不到会话/工作区服务导致徽标/归档/拖拽不生效的问题。
+
 ## [0.7.6] - 2026-09-01
 
 ### Fixed
