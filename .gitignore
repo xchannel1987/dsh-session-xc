@@ -10,9 +10,8 @@ node_modules/
 # 备份文件
 *.bak-*
 
-# 本地安装源：profile 注册的是 file:.../dsh-session-xc-*.tgz，
-# tgz 必须入库（git 管理），否则删了就无法重装插件。
-!dsh-session-xc-*.tgz
+# npm 包：tgz 不入 git 仓库（本地保留供 profile 的 file: 引用，重装插件需要本地文件）
+*.tgz
 
 # 项目本地说明文档（不入库）
 CLAUDE.md
