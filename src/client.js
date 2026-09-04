@@ -1,4 +1,8 @@
-// dsh-session-xc 浏览器端 bundle（手写，无构建步骤）v0.7.1
+// dsh-session-xc 浏览器端 bundle（手写，无构建步骤）v0.8.0
+//
+// v0.8.0 适配：DSH 0.1.2+ 会话常驻——被拖拽的会话若在本进程内已激活，
+//   Host 会将其移动排队（pendingMoves），重启 DSH 后自动应用；客户端
+//   区分"已移动"与"已排队"提示，并在启动后提示仍未应用的排队移动。
 //
 // 功能：
 //   徽标：工作区名称旁显示可见会话数 (N)（嵌入标题 span，同一行、0 不显示）
@@ -124,6 +128,7 @@ window.__ModuleLoader__.load({
       var observer = null;
       var rafPending = false;
       var toastTimer = null;
+      var pendingNoticeTimer = null;
       var docPointerHandler = null;
       var mobileOutsideGuard = null;
       var mobileKeepOpenTitle = null;
@@ -310,6 +315,16 @@ window.__ModuleLoader__.load({
 
       function cleanTitleOf(span) {
         var clone = span.cloneNode(true);
+        var badgeEl = clone.querySelector("[" + BADGE_ATTR + "]");
+        if (badgeEl) badgeEl.remove();
+        return (clone.textContent || "").trim();
+      }
+
+      // 计算抽屉分区标题文本时剔除已注入的徽标：徽标是标题元素的子节点，
+      // textContent 会包含徽标文本（如 "工作区 (5)"），直接比较会匹配失败，
+      // 导致"工作区总活跃会话数"在归档/恢复后不再更新（首次挂上徽标即冻结）。
+      function cleanSectionLabelText(labelEl) {
+        var clone = labelEl.cloneNode(true);
         var badgeEl = clone.querySelector("[" + BADGE_ATTR + "]");
         if (badgeEl) badgeEl.remove();
         return (clone.textContent || "").trim();
@@ -513,7 +528,8 @@ window.__ModuleLoader__.load({
             var sectionLabels = document.querySelectorAll('[class*="sectionLabel"]');
             for (var si = 0; si < sectionLabels.length; si++) {
               var labelEl = sectionLabels[si];
-              var labelText = (labelEl.textContent || "").trim();
+              // 用剔除徽标后的文本来匹配（徽标是标题子节点，直接取 textContent 会因混入徽标文本而永远匹配不上）
+              var labelText = cleanSectionLabelText(labelEl);
               // 匹配 "工作区"、"会话"、"Workspaces"、"Sessions" 等标题
               if (labelText === "工作区" || labelText === "会话" || labelText === "Workspaces" || labelText === "Sessions") {
                 // 检查是否已经有徽章
@@ -703,8 +719,14 @@ window.__ModuleLoader__.load({
           targetWorkspaceId: targetWorkspaceId
         }).then(function (res) {
           if (res && res.ok) {
-            var targetWs = workspaceItems.find(function (ws) { return ws.workspaceId === targetWorkspaceId; });
-            toast("已移动会话到 " + (targetWs ? targetWs.title : "目标工作区"));
+            if (res.value && res.value.queued) {
+              toast(res.value.busy
+                ? "该会话正在生成中，已排队移动：重启 DSH 后自动完成"
+                : "该会话在本 DSH 进程内常驻（仅关闭标签页无法释放），已排队移动：重启 DSH 后自动完成");
+            } else {
+              var targetWs = workspaceItems.find(function (ws) { return ws.workspaceId === targetWorkspaceId; });
+              toast("已移动会话到 " + (targetWs ? targetWs.title : "目标工作区"));
+            }
             refresh();
           } else {
             var errMsg = res && res.error && res.error.message ? res.error.message : "移动失败";
@@ -1021,3 +1043,664 @@ window.__ModuleLoader__.load({
 
           // 全部删除按钮（移动端）
           if (info && info.items.length > 0) {
+            var mobileDeleteAllBtn = document.createElement("button");
+            mobileDeleteAllBtn.type = "button";
+            mobileDeleteAllBtn.textContent = "全部删除";
+            mobileDeleteAllBtn.style.cssText = "flex:none;padding:4px 8px;border:1px solid #ef4444;border-radius:4px;background:transparent;color:#ef4444;font-size:11px;line-height:16px;cursor:pointer;white-space:nowrap;";
+            mobileDeleteAllBtn.setAttribute("data-dstc-delete-all", "");
+            mobileDeleteAllBtn.addEventListener("click", function (e) {
+              e.stopPropagation();
+              var count = info ? info.items.length : 0;
+              var confirmMsg = "确定要永久删除当前工作区的所有已归档会话吗？\n\n共 " + count + " 个会话将被永久删除，此操作不可恢复。";
+              if (confirm(confirmMsg)) {
+                deleteAllArchivedSessions(openWorkspaceTitle, info, mobileDeleteAllBtn);
+              }
+            });
+            mobileHeader.appendChild(mobileDeleteAllBtn);
+          }
+
+          host.appendChild(mobileHeader);
+        }
+        if (!info || info.items.length === 0) {
+          var empty = document.createElement("div");
+          empty.style.cssText = isPC ? "display:flex;align-items:center;justify-content:center;min-height:220px;padding:32px;color:var(--dsw-alias-label-tertiary,#98a2b3);font-size:13px;line-height:20px;text-align:center;" : "padding:10px 4px;color:var(--dsw-alias-label-tertiary,#9aa4b2);font-size:12px;line-height:16px;";
+          empty.textContent = "无已归档会话";
+          host.appendChild(empty);
+          return;
+        }
+        info.items.forEach(function (item) {
+          var row = document.createElement("div");
+          row.style.cssText = isPC ? "display:flex;align-items:center;gap:16px;padding:15px 12px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,0.06));" : "display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;";
+          row.addEventListener("mouseenter", function () { this.style.background = "var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.05))"; });
+          row.addEventListener("mouseleave", function () { this.style.background = "transparent"; });
+          var titleEl = document.createElement("div");
+          titleEl.style.cssText = (isPC ? "" : "flex:1;min-width:0;") + "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary,#1d2129);font-size:" + (isPC ? "14px" : "12.5px") + ";line-height:" + (isPC ? "20px" : "16px") + ";";
+          titleEl.textContent = item.title;
+          var timeEl = document.createElement("div");
+          timeEl.style.cssText = isPC ? "margin-top:3px;color:var(--dsw-alias-label-tertiary,#9aa4b2);font-size:11px;line-height:16px;" : "flex:none;color:var(--dsw-alias-label-tertiary,#9aa4b2);font-size:11px;line-height:16px;padding-left:6px;";
+          timeEl.textContent = timeLabel(item.updatedAt);
+          if (isPC) {
+            var textWrap = document.createElement("div");
+            textWrap.style.cssText = "flex:1;min-width:0;";
+            textWrap.appendChild(titleEl);
+            if (timeEl.textContent) textWrap.appendChild(timeEl);
+            row.appendChild(textWrap);
+          } else {
+            row.appendChild(titleEl);
+            if (timeEl.textContent) row.appendChild(timeEl);
+          }
+          if (isPC) {
+            // 恢复按钮
+            var restoreBtn = document.createElement("button");
+            restoreBtn.type = "button";
+            restoreBtn.textContent = "恢复";
+            restoreBtn.style.cssText = "flex:none;padding:6px 12px;border:1px solid var(--dsw-alias-interactive-primary,#4f7cff);border-radius:6px;background:transparent;color:var(--dsw-alias-interactive-primary,#4f7cff);font-size:13px;line-height:18px;cursor:pointer;transition:all .12s ease;";
+            restoreBtn.addEventListener("mouseenter", function () { if (!this.disabled) this.style.background = "var(--dsw-alias-interactive-primary,#4f7cff)"; if (!this.disabled) this.style.color = "#fff"; });
+            restoreBtn.addEventListener("mouseleave", function () { this.style.background = "transparent"; this.style.color = "var(--dsw-alias-interactive-primary,#4f7cff)"; });
+            restoreBtn.addEventListener("click", function (e) { e.stopPropagation(); unarchiveSession(openWorkspaceTitle, item, restoreBtn); });
+  
+            // 删除按钮
+            var deleteBtn = document.createElement("button");
+            deleteBtn.type = "button";
+            deleteBtn.textContent = "删除";
+            deleteBtn.style.cssText = "flex:none;padding:6px 12px;border:1px solid #ef4444;border-radius:6px;background:transparent;color:#ef4444;font-size:13px;line-height:18px;cursor:pointer;transition:all .12s ease;";
+            deleteBtn.addEventListener("mouseenter", function () { if (!this.disabled) { this.style.background = "#ef4444"; this.style.color = "#fff"; } });
+            deleteBtn.addEventListener("mouseleave", function () { this.style.background = "transparent"; this.style.color = "#ef4444"; });
+            deleteBtn.addEventListener("click", function (e) {
+              e.stopPropagation();
+              var confirmMsg = "确定要永久删除会话\"" + item.title + "\"吗？\n\n此操作不可恢复，会话的所有对话历史将被永久删除。";
+              if (confirm(confirmMsg)) {
+                deleteSession(openWorkspaceTitle, item, deleteBtn, null);
+              }
+            });
+  
+            // 按钮容器
+            var btnWrap = document.createElement("div");
+            btnWrap.style.cssText = "flex:none;display:flex;gap:8px;";
+            btnWrap.appendChild(restoreBtn);
+            btnWrap.appendChild(deleteBtn);
+            row.appendChild(btnWrap);
+          } else {
+            // 移动端：左滑删除 + 点击恢复
+            var touchStartX = 0;
+            var currentTranslateX = 0;
+            var isDragging = false;
+            var deleteBtnShown = false;
+            var DELETE_THRESHOLD = 50;
+            var MAX_TRANSLATE = 60;
+  
+            row.addEventListener("touchstart", function(e) {
+              if (deleteBtnShown) {
+                var delBtn = row.querySelector("[data-dstc-mobile-delete]");
+                if (delBtn && !delBtn.contains(e.target)) {
+                  resetDeleteButton(null, row);
+                  deleteBtnShown = false;
+                }
+                return;
+              }
+              touchStartX = e.touches[0].clientX;
+              isDragging = true;
+              row.style.transition = "none";
+            }, { passive: true });
+  
+            row.addEventListener("touchmove", function(e) {
+              if (!isDragging || deleteBtnShown) return;
+              var deltaX = e.touches[0].clientX - touchStartX;
+    
+              // 只允许左滑
+              if (deltaX > 0) deltaX = 0;
+              if (deltaX < -MAX_TRANSLATE) deltaX = -MAX_TRANSLATE;
+    
+              currentTranslateX = deltaX;
+              row.style.transform = "translateX(" + deltaX + "px)";
+    
+              // 背景色变化
+              if (deltaX < -20) {
+                row.style.background = "rgba(239, 68, 68, 0.15)";
+              } else {
+                row.style.background = "transparent";
+              }
+            }, { passive: true });
+  
+            row.addEventListener("touchend", function(e) {
+              if (deleteBtnShown) return;
+              isDragging = false;
+              row.style.transition = "transform 0.15s ease";
+    
+              if (currentTranslateX < -DELETE_THRESHOLD) {
+                // 显示删除按钮
+                row.style.transform = "translateX(-" + MAX_TRANSLATE + "px)";
+                showMobileDeleteButton(row, item);
+                deleteBtnShown = true;
+              } else {
+                // 回弹
+                row.style.transform = "translateX(0)";
+                row.style.background = "transparent";
+              }
+              currentTranslateX = 0;
+            }, { passive: true });
+  
+            // 点击恢复（只有未显示删除按钮时生效）
+            row.addEventListener("click", function(e) {
+              if (deleteBtnShown) return;
+              if (Math.abs(currentTranslateX) > 5) return;
+              e.stopPropagation();
+              unarchiveSession(openWorkspaceTitle, item);
+            });
+  
+            function showMobileDeleteButton(row, item) {
+              row.style.position = "relative";
+              var delBtn = document.createElement("button");
+              delBtn.setAttribute("data-dstc-mobile-delete", "");
+              delBtn.textContent = "删除";
+              delBtn.style.cssText = "position:absolute;right:-60px;top:0;bottom:0;width:60px;background:#ef4444;color:#fff;border:none;font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;";
+              delBtn.addEventListener("click", function(e) {
+                e.stopPropagation();
+                var confirmMsg = "确定要永久删除此会话吗？\n\n此操作不可恢复。";
+                if (confirm(confirmMsg)) {
+                  deleteSession(openWorkspaceTitle, item, null, row);
+                } else {
+                  resetDeleteButton(null, row);
+                  deleteBtnShown = false;
+                }
+              });
+              row.appendChild(delBtn);
+            }
+          }
+          host.appendChild(row);
+        });
+      }
+
+      function unarchiveSession(title, item, button) {
+        if (button && button.disabled) return;
+        if (!connection || !connection.rpc || !connection.rpc.call) return;
+        if (!contentEl) { mobileKeepOpenTitle = title; mobileKeepOpenUntil = Date.now() + 3000; }
+        var originalText = button ? button.textContent : "恢复";
+        if (button) {
+          button.disabled = true;
+          button.setAttribute("aria-busy", "true");
+          button.textContent = "恢复中…";
+          button.style.cursor = "wait";
+          button.style.opacity = "0.65";
+        }
+        var resetButton = function () {
+          if (!button || !button.parentNode) return;
+          button.disabled = false;
+          button.removeAttribute("aria-busy");
+          button.textContent = originalText;
+          button.style.cursor = "pointer";
+          button.style.opacity = "1";
+        };
+        var result;
+        try { result = Promise.resolve(connection.rpc.call(RPC_CHANNEL, "unarchiveSession", { sessionId: item.sessionId })); }
+        catch (e) { resetButton(); toast("恢复失败"); return; }
+        result.then(function (res) {
+          if (res && res.ok) {
+            var info = archiveByTitle.get(title);
+            if (info) {
+              info.items = info.items.filter(function (x) { return x.sessionId !== item.sessionId; });
+              info.count = info.items.length;
+              if (info.count === 0) archiveByTitle.delete(title);
+            }
+            applyAll();
+            if (openWorkspaceTitle === title) {
+              renderPanel();
+              keepMobileSurfaceOpen(title);
+            }
+            toast("已恢复会话：" + item.title);
+            refresh();
+          } else {
+            resetButton();
+            toast("恢复失败");
+          }
+        }).catch(function () {
+          resetButton();
+          toast("恢复失败");
+        });
+      }
+
+      function deleteSession(title, item, button, row) {
+        if (button && button.disabled) return;
+        if (!connection || !connection.rpc || !connection.rpc.call) return;
+        if (!contentEl) { mobileKeepOpenTitle = title; mobileKeepOpenUntil = Date.now() + 3000; }
+        
+        // 禁用按钮
+        if (button) {
+          button.disabled = true;
+          button.textContent = "删除中…";
+          button.style.opacity = "0.65";
+          button.style.cursor = "wait";
+        }
+        
+        // 调用 RPC
+        var result;
+        try {
+          result = Promise.resolve(connection.rpc.call(RPC_CHANNEL, "deleteSession", { 
+            sessionId: item.sessionId 
+          }));
+        } catch (e) {
+          resetDeleteButton(button, row);
+          toast("删除失败");
+          return;
+        }
+        
+        result.then(function(res) {
+          if (res && res.ok) {
+            // v0.5.0: 记录已删除的会话 ID
+            deletedSessionIds.add(item.sessionId);
+
+            // 从本地缓存移除
+            var info = archiveByTitle.get(title);
+            if (info) {
+              info.items = info.items.filter(function(x) { return x.sessionId !== item.sessionId; });
+              info.count = info.items.length;
+              if (info.count === 0) archiveByTitle.delete(title);
+            }
+  
+            // 移动端：行滑出消失动画
+            if (row && !button) {
+              row.style.transition = "transform 0.2s ease, opacity 0.2s ease";
+              row.style.transform = "translateX(-100%)";
+              row.style.opacity = "0";
+              setTimeout(function() {
+                refresh();
+                if (openWorkspaceTitle === title) {
+                  renderPanel();
+                  keepMobileSurfaceOpen(title);
+                }
+              }, 200);
+            } else {
+              // PC 端：直接刷新
+              applyAll();
+              if (openWorkspaceTitle === title) {
+                renderPanel();
+                keepMobileSurfaceOpen(title);
+              }
+            }
+  
+            toast("已删除会话：" + item.title);
+            refresh();
+          } else {
+            resetDeleteButton(button, row);
+            toast(res && res.error && res.error.message ? res.error.message : "删除失败");
+          }
+        }).catch(function(err) {
+          resetDeleteButton(button, row);
+          toast("删除失败: " + (err.message || "未知错误"));
+        });
+      }
+
+      function resetDeleteButton(button, row) {
+        if (button && button.parentNode) {
+          button.disabled = false;
+          button.textContent = "删除";
+          button.style.opacity = "1";
+          button.style.cursor = "pointer";
+          button.style.background = "transparent";
+          button.style.color = "#ef4444";
+        }
+        // 移动端：行回弹
+        if (row) {
+          row.style.transition = "transform 0.15s ease";
+          row.style.transform = "translateX(0)";
+          row.style.background = "transparent";
+          // 移除删除按钮
+          var delBtn = row.querySelector("[data-dstc-mobile-delete]");
+          if (delBtn) delBtn.remove();
+        }
+      }
+
+      // 批量删除当前工作区的所有已归档会话
+      function deleteAllArchivedSessions(title, info, button) {
+        if (button && button.disabled) return;
+        if (!connection || !connection.rpc || !connection.rpc.call) return;
+        if (!contentEl) { mobileKeepOpenTitle = title; mobileKeepOpenUntil = Date.now() + 3000; }
+        
+        // 禁用按钮
+        if (button) {
+          button.disabled = true;
+          button.textContent = "删除中…";
+          button.style.opacity = "0.65";
+          button.style.cursor = "wait";
+        }
+        
+        // 收集所有 sessionId
+        var sessionIds = info && info.items ? info.items.map(function(item) { return item.sessionId; }) : [];
+        if (sessionIds.length === 0) {
+          if (button) {
+            button.disabled = false;
+            button.textContent = "全部删除";
+            button.style.opacity = "1";
+            button.style.cursor = "pointer";
+          }
+          toast("没有可删除的会话");
+          return;
+        }
+        
+        var workspace = workspaceItems.find(function (item) { return item.title === title; });
+        var workspaceId = workspace && workspace.workspaceId;
+        if (typeof workspaceId !== "string" || workspaceId.length === 0) {
+          if (button) {
+            button.disabled = false;
+            button.textContent = "全部删除";
+            button.style.opacity = "1";
+            button.style.cursor = "pointer";
+          }
+          toast("无法确定当前工作区");
+          return;
+        }
+
+        // 调用 RPC
+        var result;
+        try {
+          result = Promise.resolve(connection.rpc.call(RPC_CHANNEL, "deleteAllArchivedSessions", {
+            sessionIds: sessionIds,
+            workspaceId: workspaceId
+          }));
+        } catch (e) {
+          if (button) {
+            button.disabled = false;
+            button.textContent = "全部删除";
+            button.style.opacity = "1";
+            button.style.cursor = "pointer";
+          }
+          toast("批量删除失败");
+          return;
+        }
+        
+        result.then(function(res) {
+          if (res && res.ok) {
+            var value = res.value || {};
+            var deletedIds = Array.isArray(value.deletedIds) ? value.deletedIds : [];
+            var failedCount = typeof value.failedCount === "number" ? value.failedCount : 0;
+            deletedIds.forEach(function(sid) { deletedSessionIds.add(sid); });
+
+            var archiveInfo = archiveByTitle.get(title);
+            if (archiveInfo) {
+              archiveInfo.items = archiveInfo.items.filter(function(item) {
+                return deletedIds.indexOf(item.sessionId) === -1;
+              });
+              archiveInfo.count = archiveInfo.items.length;
+              if (archiveInfo.count === 0) archiveByTitle.delete(title);
+            }
+
+            applyAll();
+            if (openWorkspaceTitle === title) {
+              renderPanel();
+              keepMobileSurfaceOpen(title);
+            }
+
+            var deletedCount = deletedIds.length;
+            toast(failedCount > 0
+              ? "已删除 " + deletedCount + " 个会话，" + failedCount + " 个删除失败"
+              : "已删除 " + deletedCount + " 个会话");
+            refresh();
+          } else {
+            if (button) {
+              button.disabled = false;
+              button.textContent = "全部删除";
+              button.style.opacity = "1";
+              button.style.cursor = "pointer";
+            }
+            toast(res && res.error && res.error.message ? res.error.message : "批量删除失败");
+          }
+        }).catch(function(err) {
+          if (button) {
+            button.disabled = false;
+            button.textContent = "全部删除";
+            button.style.opacity = "1";
+            button.style.cursor = "pointer";
+          }
+          toast("批量删除失败: " + (err.message || "未知错误"));
+        });
+      }
+
+      function toast(msg) {
+        var t = document.querySelector("[" + TOAST_ATTR + "]");
+        if (!t) {
+          t = document.createElement("div");
+          t.setAttribute(TOAST_ATTR, "");
+          t.style.cssText = "position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:10000;background:rgba(28,32,40,0.92);color:#fff;font-size:13px;line-height:20px;padding:8px 14px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.25);max-width:60vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:opacity .25s ease;";
+          document.body.appendChild(t);
+        }
+        t.textContent = msg;
+        t.style.opacity = "1";
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () {
+          t.style.opacity = "0";
+          setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 280);
+        }, 2600);
+      }
+
+      // ---------- "会话增强"设置卡片（settings.plugin.item，mobile-xc 同款 UI） ----------
+
+      function installSettingsCard() {
+        try {
+          var face = ctx;
+          var slots = face.slots;
+          var scopeFace = face.settingsScope;
+          if (!slots || typeof slots.inject !== "function") return;
+          if (!scopeFace || typeof scopeFace.bind !== "function") return;
+          var cardScope;
+          try { cardScope = scopeFace.bind({ namespace: NS }); } catch (e) { return; }
+          if (!cardScope || typeof cardScope.getSnapshot !== "function" || typeof cardScope.set !== "function") return;
+
+          var CardComponent = function () {
+            var openState = React.useState(false);
+            var open = openState[0], setOpen = openState[1];
+            var read = function () {
+              try {
+                var v = resolveSettings(cardScope.getSnapshot());
+                return v !== null && v !== undefined && typeof v === "object" ? v : {};
+              } catch (e) { return {}; }
+            };
+            var vs = React.useState(read);
+            var values = vs[0], setValues = vs[1];
+            var dirtyRef = React.useRef(false);
+            React.useEffect(function () {
+              var alive = true;
+              var sync = function () {
+                if (!alive) return;
+                try { var v = read(); if (v !== null && v !== undefined && Object.keys(v).length > 0) setValues(v); } catch (e) { /* ignore */ }
+              };
+              sync();
+              var timer = window.setTimeout(sync, 400);
+              var off = typeof cardScope.subscribe === "function" ? cardScope.subscribe(function () { if (!dirtyRef.current) sync(); }) : null;
+              return function () {
+                alive = false;
+                window.clearTimeout(timer);
+                if (off) { try { off(); } catch (e) { /* ignore */ } }
+              };
+            }, []);
+            var toggle = function (key, checked) {
+              dirtyRef.current = true;
+              try { setValues(Object.assign({}, values, { [key]: checked })); } catch (e) { /* ignore */ }
+              try {
+                var pr = cardScope.set(key, checked);
+                if (pr && typeof pr.then === "function") { void pr.catch(function () { try { setValues(read()); } catch (e2) { /* ignore */ } }); }
+              } catch (e) { /* ignore */ }
+            };
+            var rows = FIELDS.map(function (f) {
+              var on = values[f.key] === true;
+              return React.createElement(
+                "label", { key: f.key, className: "dsh-sxc-srow", "data-dstk-row": f.key },
+                React.createElement("span", { className: "dsh-sxc-srow-text" },
+                  React.createElement("span", { className: "dsh-sxc-srow-title" }, f.label),
+                  React.createElement("span", { className: "dsh-sxc-srow-hint" }, f.hint)),
+                React.createElement("span", { className: "dsh-sxc-switch" + (on ? " on" : "") },
+                  React.createElement("input", { type: "checkbox", checked: on, onChange: function (e) { toggle(f.key, e.target.checked); } }),
+                  React.createElement("span", { className: "dsh-sxc-switch-track" }),
+                  React.createElement("span", { className: "dsh-sxc-switch-thumb" }))
+              );
+            });
+            return React.createElement(
+              "li", { className: "dsh-sxc-card" + (open ? " dsh-sxc-cardOpen" : ""), "data-dstk-card": true },
+              React.createElement("button", {
+                type: "button", className: "dsh-sxc-header", "aria-expanded": open ? "true" : "false",
+                "aria-label": (open ? "收起" : "展开") + ": 会话增强",
+                onClick: function () { setOpen(!open); }
+              },
+                React.createElement("span", { className: "dsh-sxc-headText" },
+                  React.createElement("span", { className: "dsh-sxc-name" }, "会话增强"),
+                  React.createElement("span", { className: "dsh-sxc-description" }, "工作区可见会话数 / 已归档会话入口")),
+                React.createElement("svg", {
+                  className: "dsh-sxc-chevron" + (open ? " dsh-sxc-chevronOpen" : ""), width: "14", height: "14", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true"
+                },
+                  React.createElement("path", { d: "M3 6L8 11L13 6", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }))),
+              open ? React.createElement("div", { className: "dsh-sxc-body" }, rows) : null
+            );
+          };
+
+          ctx.effect(function () {
+            var styleTag = document.createElement("style");
+            styleTag.setAttribute("data-plugin-css", "@dsh-session-xc/card");
+            styleTag.textContent = [
+              // —— 卡片外壳：与官方 PluginCard 同款（border-l2 / bg-layer-3 / 12px 圆角 / 悬停边框变亮） ——
+              ".dsh-sxc-card{border:1px solid var(--dsw-alias-border-l2,#3b4557);background:var(--dsw-alias-bg-layer-3,#171d29);border-radius:12px;list-style:none;transition:border-color .16s,background .16s}",
+              ".dsh-sxc-card:hover{border-color:var(--dsw-alias-label-dimmed,#76839b)}",
+              ".dsh-sxc-cardOpen{background:var(--dsw-alias-bg-layer-2,#1e2430);border-color:var(--dsw-alias-label-dimmed,#76839b)}",
+              ".dsh-sxc-header{appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;border-radius:12px;align-items:center;gap:12px;padding:14px 16px;display:flex}",
+              ".dsh-sxc-header:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:-2px}",
+              ".dsh-sxc-headText{flex-direction:column;flex:1;gap:4px;min-width:0;display:flex}",
+              ".dsh-sxc-name{color:var(--dsw-alias-label-primary,#e2e8f0);font-size:15px;font-weight:600;line-height:1.4}",
+              ".dsh-sxc-description{color:var(--dsw-alias-label-tertiary,#8a94a6);font-size:13px;line-height:1.5}",
+              ".dsh-sxc-chevron{color:var(--dsw-alias-label-tertiary,#8a94a6);flex:none;transition:transform .16s var(--ds-ease-in-out,ease)}",
+              ".dsh-sxc-chevronOpen{transform:rotate(180deg)}",
+              ".dsh-sxc-body{border-top:1px solid var(--dsw-alias-border-l2,#3b4557);margin:0 16px;padding-bottom:8px}",
+              // —— 开关行：与官方 fields 行同款（12px 上下留白 / border-l2 分隔线） ——
+              ".dsh-sxc-srow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid var(--dsw-alias-border-l2,#3b4557);cursor:pointer}",
+              ".dsh-sxc-srow:first-child{border-top:none}",
+              ".dsh-sxc-srow-text{display:flex;flex-direction:column;gap:2px;min-width:0;padding-right:8px}",
+              ".dsh-sxc-srow-title{font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary,#e2e8f0);font-weight:500}",
+              ".dsh-sxc-srow-hint{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#8a94a6)}",
+              ".dsh-sxc-switch{position:relative;width:40px;height:24px;flex:none;border-radius:12px;background:var(--dsw-alias-border-l2,#3b4557);transition:background .18s var(--ds-ease-in-out,ease)}",
+              ".dsh-sxc-switch.on{background:var(--dsw-alias-button-info-fill,#3b82f6)}",
+              ".dsh-sxc-switch input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}",
+              ".dsh-sxc-switch-thumb{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .18s var(--ds-ease-in-out,ease);pointer-events:none}",
+              ".dsh-sxc-switch.on .dsh-sxc-switch-thumb{transform:translateX(16px)}"
+            ].join("");
+            document.head.appendChild(styleTag);
+            var remove = slots.inject("settings.plugin.item", function* () {
+              yield slots.register(
+                { name: "settings.plugin.item", key: NS, label: function () { return NS; } },
+                CardComponent
+              );
+            });
+            return function () {
+              styleTag.remove();
+              if (remove && typeof remove === "function") { try { remove(); } catch (e) { /* ignore */ } }
+            };
+          }, "dsh-session-xc: plugin config card");
+        } catch (e) { /* 无 slots/settingsScope 时跳过设置卡片 */ }
+      }
+
+      // ---------- 生命周期 ----------
+
+      docPointerHandler = function (e) {
+        if (!panel) return;
+        if (overlay) return; // PC：遮罩铺满视口，关闭由遮罩自身 click handler（event.target === overlay）处理
+        if (panel.contains(e.target)) return;
+        if (e.target && e.target.closest && e.target.closest("[" + BTN_ATTR + "]")) return;
+        closePanel();
+      };
+      docKeyHandler = function (e) { if (e.key === "Escape" && panel) closePanel(); };
+
+      installSettingsCard();
+
+      // v0.8.0: 启动后提示仍未应用的排队移动（例如浏览器在 Host flush 前抢先重连并
+      // 重新打开了目标会话，导致条目顺延）。4s 后查询一次，存在待应用条目则 toast。
+      if (connection && connection.rpc && typeof connection.rpc.call === "function") {
+        pendingNoticeTimer = setTimeout(function () {
+          pendingNoticeTimer = null;
+          try {
+            connection.rpc.call(RPC_CHANNEL, "listPendingMoves", {}).then(function (res) {
+              var list = res && res.ok && res.value && Array.isArray(res.value.pendingMoves) ? res.value.pendingMoves : [];
+              if (list.length > 0) {
+                toast("有 " + list.length + " 个会话移动待应用：重启 DSH 后会自动完成（期间请勿删除相关会话文件）");
+              }
+            }).catch(function () { /* 瞬时失败：静默 */ });
+          } catch (e) { /* ignore */ }
+        }, 4000);
+      }
+
+      if (typeof document !== "undefined" && typeof window !== "undefined") {
+        visibilityHandler = function () { if (!document.hidden) refreshFromStores(); };
+        document.addEventListener("visibilitychange", visibilityHandler);
+        document.addEventListener("pointerdown", docPointerHandler, true);
+        document.addEventListener("keydown", docKeyHandler, true);
+        try {
+          observer = new MutationObserver(function () { scheduleApply(); injectDragListeners(); });
+          observer.observe(document.body, { subtree: true, childList: true, attributes: false });
+        } catch (e) { observer = null; }
+        scheduleApply();
+        injectDragListeners();
+      }
+      // v0.5.0: 如果无法订阅 workspaces 服务，回退到旧的轮询方式
+      if (!workspacesUnsubscribe && api && api.workspace && typeof api.workspace.list === "function") {
+        function refreshFallback() {
+          try {
+            var res = Promise.resolve(api.workspace.list({}));
+            res.then(function (r) {
+              if (!r || !r.result || !r.result.ok) return;
+              var value = r.result.value || {};
+              var items = Array.isArray(value.items) ? value.items : [];
+              var archivedSessionIds = Array.isArray(value.archivedSessionIds) ? value.archivedSessionIds : [];
+              // 降级 RPC 没有 sessions.list 的双基线投影，不能可靠排除临时 blank；
+              // 因此初始化阶段不展示计数，等待核心 store 订阅恢复后再计算。
+              if (sessionsListForSubscription && typeof sessionsListForSubscription.getSnapshot === "function") {
+                var fallbackSessions = sessionsListForSubscription.getSnapshot();
+                if (fallbackSessions && fallbackSessions.phase === "ready") {
+                  computeArchiveData({ items: items, archivedSessionIds: archivedSessionIds, phase: "ready", baselinesReady: true }, fallbackSessions);
+                }
+              }
+            }).catch(function () { /* 瞬时失败 */ });
+          } catch (e) { /* ignore */ }
+        }
+        timer = setInterval(refreshFallback, REFRESH_MS);
+        // 延迟调用，等待 DSH 核心初始化完成
+        setTimeout(refreshFallback, 100);
+      }
+
+      var cleanup = function () {
+        if (typeof window !== "undefined" && window[instanceKey] === instance) window[instanceKey] = null;
+        if (workspacesUnsubscribe) {
+          try { workspacesUnsubscribe(); } catch (e) { /* ignore */ }
+        }
+        if (sessionsUnsubscribe) {
+          try { sessionsUnsubscribe(); } catch (e) { /* ignore */ }
+        }
+        if (timer) clearInterval(timer);
+        if (observer) observer.disconnect();
+        if (toastTimer) clearTimeout(toastTimer);
+        if (pendingNoticeTimer) clearTimeout(pendingNoticeTimer);
+        if (typeof document !== "undefined" && typeof window !== "undefined") {
+          if (visibilityHandler) document.removeEventListener("visibilitychange", visibilityHandler);
+          if (docPointerHandler) document.removeEventListener("pointerdown", docPointerHandler, true);
+          if (docKeyHandler) document.removeEventListener("keydown", docKeyHandler, true);
+          if (documentDragHandler) document.removeEventListener("dragover", documentDragHandler, true);
+          if (documentDropHandler) document.removeEventListener("drop", documentDropHandler, true);
+          if (documentDragLeaveHandler) document.removeEventListener("dragleave", documentDragLeaveHandler, true);
+          if (documentDragEndHandler) document.removeEventListener("dragend", documentDragEndHandler, true);
+          closePanel();
+          try {
+            var btns = document.querySelectorAll("[" + BTN_ATTR + "]");
+            for (var i = 0; i < btns.length; i++) {
+              var bm = btns[i].parentNode;
+              if (bm && bm._dstkRoot) { try { bm._dstkRoot.unmount(); } catch (e) { /* ignore */ } }
+              if (bm) bm.remove(); else btns[i].remove();
+            }
+            var badges = document.querySelectorAll("[" + BADGE_ATTR + "]");
+            for (var j = 0; j < badges.length; j++) badges[j].remove();
+          } catch (e) { /* ignore */ }
+        }
+      };
+      instance.cleanup = cleanup;
+      return cleanup;
+
+    }
+
+    exports.inject = inject;
+    exports.apply = apply;
+    return module.exports;
+  }
+});

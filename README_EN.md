@@ -41,6 +41,10 @@ Drag sessions to target workspace for moving:
 - **Drag Indicator**: Highlights when entering valid target
 - **Confirmation**: Confirmation dialog before release
 - **Auto Categorization**: Workspace attribution updated after move
+- **Resident Queuing (v0.8.0)**: In DSH 0.1.2+, once a session is opened in the GUI the
+  host keeps its agent resident until DSH restarts (closing tabs does not release it).
+  Dropping such a session queues the move persistently; it applies automatically on the
+  next DSH startup. Sessions never opened still move instantly.
 
 ## 📦 Installation
 
@@ -83,7 +87,8 @@ Restart DSH after installation. Enhanced features will appear in sidebar workspa
 1. Long press session row to start dragging
 2. Drag to target workspace or any session under it
 3. Release when target highlights
-4. Confirm move
+4. Confirm move (if you see a "queued" toast, the session is resident in this DSH
+   process; the move completes automatically after the next DSH restart)
 
 ## 🔧 Data Sources
 

@@ -8,6 +8,9 @@
 //      unarchive；本插件注册 /dsh-session-xc RPC 的 unarchiveSession 端点，从
 //      workspaceRegistry 的全局 archivedSessionIds 移除目标会话。
 //   4. 功能 3（跨工作区移动会话）：修改 session 日志文件中的 cwd 字段，实现真正的移动。
+//      新 DSH（>=0.1.2-alpha.3）中会话一旦被 GUI 打开，Host 即常驻激活其 Agent，直到进程退出
+//      才释放（关闭浏览器标签页不会释放）。移动常驻会话会造成历史分裂，故常驻会话的移动先排队
+//      到 workspaceRegistry 全局状态（pendingMoves），由下次 Host 启动时自动应用。
 //   5. 功能 4（删除已归档会话）：从 archivedSessionIds 移除并删除会话文件，释放存储空间。
 
 import z from "@deepseek-ai/schemastery";
@@ -126,11 +129,161 @@ function WorkspaceId(id) {
   return id;
 }
 
+// ========== 会话移动：即时执行 / 常驻排队 ==========
+
+/**
+ * 实际执行一次会话移动（不检查常驻状态；调用方须保证会话未在本进程激活）。
+ * 移动日志文件、改写 header 中的 cwd，并同步 workspaceRegistry 内存与持久状态。
+ * @param c - 注入了 workspaceRegistry 等服务的上下文。
+ * @param {string} sessionId - 会话 ID。
+ * @param {string} targetWorkspaceId - 目标工作区 ID。
+ * @returns {Promise<{ok: boolean, value?: object, error?: object}>}
+ */
+async function performSessionMove(c, sessionId, targetWorkspaceId) {
+  const registry = c.workspaceRegistry;
+
+  // 1. 获取目标工作区
+  const targetWs = registry.get(WorkspaceId(targetWorkspaceId));
+  if (!targetWs) {
+    return { ok: false, error: { code: "workspace-not-found", message: "Target workspace not found", details: {} } };
+  }
+
+  // 2. 获取当前 session 信息
+  const header = registry.headers.get(sessionId);
+  if (!header) {
+    return { ok: false, error: { code: "session-not-found", message: "Session not found in persistence", details: {} } };
+  }
+
+  const oldCwd = registry.sessionPaths.get(sessionId) || header.cwd;
+  const newCwd = targetWs.path;
+  if (typeof oldCwd !== "string" || oldCwd.length === 0 || typeof newCwd !== "string" || newCwd.length === 0) {
+    return { ok: false, error: { code: "session-path-missing", message: "Session workspace path is unavailable", details: {} } };
+  }
+
+  // 3. 查找源工作区：以 workspace.sessionIds 作为归属真源，path 仅作兼容回退。
+  let sourceWs = null;
+  for (const ws of registry.list()) {
+    if (Array.isArray(ws.record?.sessionIds) && ws.record.sessionIds.includes(sessionId)) {
+      sourceWs = ws;
+      break;
+    }
+  }
+  if (!sourceWs) {
+    for (const ws of registry.list()) {
+      if (ws.path === oldCwd) {
+        sourceWs = ws;
+        break;
+      }
+    }
+  }
+  if (!sourceWs) {
+    return { ok: false, error: { code: "source-workspace-not-found", message: "Source workspace not found", details: {} } };
+  }
+  if (oldCwd === newCwd || sourceWs === targetWs) {
+    return { ok: false, error: { code: "same-workspace", message: "Session already in target workspace", details: {} } };
+  }
+
+  // 4. 执行文件移动
+  try {
+    await moveSessionFile(sessionId, oldCwd, newCwd);
+  } catch (err) {
+    return { ok: false, error: { code: "move-failed", message: `Failed to move session file: ${err.message}`, details: { error: err.message } } };
+  }
+
+  // 5. 更新内存与持久状态
+  registry.sessionPaths.set(sessionId, newCwd);
+  await targetWs.mutate((record) => ({
+    ...record,
+    sessionIds: Array.isArray(record.sessionIds) && record.sessionIds.includes(sessionId)
+      ? record.sessionIds
+      : [sessionId, ...(Array.isArray(record.sessionIds) ? record.sessionIds : [])]
+  }));
+  await sourceWs.mutate((record) => ({
+    ...record,
+    sessionIds: (Array.isArray(record.sessionIds) ? record.sessionIds : []).filter((id) => id !== sessionId)
+  }));
+
+  return { ok: true, value: { sessionId, targetWorkspaceId } };
+}
+
+/** 读取排队移动列表（存于 workspaceRegistry 全局状态，跨重启持久）。 */
+function getPendingMoves(registry) {
+  return Array.isArray(registry.state?.pendingMoves) ? registry.state.pendingMoves : [];
+}
+
+/** 写回排队移动列表。 */
+async function savePendingMoves(registry, list) {
+  const next = { ...registry.state, pendingMoves: list };
+  await registry.global.set(next);
+  registry.state = next;
+}
+
+/** 排队一个移动；同一会话只保留最后一次目标（后拖覆盖先拖）。 */
+async function enqueuePendingMove(registry, sessionId, targetWorkspaceId) {
+  const next = getPendingMoves(registry).filter((m) => m && m.sessionId !== sessionId);
+  next.push({ sessionId, targetWorkspaceId });
+  await savePendingMoves(registry, next);
+}
+
+/** 应用时发现"条目已失效"的错误码：直接丢弃，不再排队。 */
+const STALE_MOVE_ERRORS = new Set([
+  "workspace-not-found",
+  "session-not-found",
+  "session-path-missing",
+  "source-workspace-not-found",
+  "same-workspace"
+]);
+
+/**
+ * 尝试应用排队中的移动：
+ * - 仍在本进程常驻激活的会话：跳过（留待下次启动）；
+ * - 目标/源/会话已消失或已在目标工作区：丢弃；
+ * - 文件读写等暂时性失败：保留，下次重试。
+ * @param c - 注入了 workspaceRegistry / sessions 的上下文。
+ * @returns {Promise<{applied: number, dropped: number, deferred: number}>}
+ */
+async function flushPendingMoves(c) {
+  const registry = c.workspaceRegistry;
+  const pending = getPendingMoves(registry);
+  const result = { applied: 0, dropped: 0, deferred: 0 };
+  if (pending.length === 0) return result;
+  const remaining = [];
+  for (const entry of pending) {
+    if (!entry || typeof entry.sessionId !== "string" || entry.sessionId.length === 0
+      || typeof entry.targetWorkspaceId !== "string" || entry.targetWorkspaceId.length === 0) {
+      result.dropped += 1;
+      continue;
+    }
+    if (c.sessions?.get(entry.sessionId) !== undefined) {
+      result.deferred += 1;
+      remaining.push(entry);
+      continue;
+    }
+    const res = await performSessionMove(c, entry.sessionId, entry.targetWorkspaceId);
+    if (res.ok) {
+      result.applied += 1;
+      console.log(`[dsh-session-xc] Applied queued session move: ${entry.sessionId} -> ${entry.targetWorkspaceId}`);
+    } else if (STALE_MOVE_ERRORS.has(res.error && res.error.code)) {
+      result.dropped += 1;
+      console.warn(`[dsh-session-xc] Dropped stale queued move for ${entry.sessionId}: ${res.error && res.error.code}`);
+    } else {
+      result.deferred += 1;
+      remaining.push(entry);
+      console.error(`[dsh-session-xc] Queued move deferred for ${entry.sessionId}: ${(res.error && res.error.message) || "unknown"}`);
+    }
+  }
+  if (remaining.length !== pending.length) {
+    await savePendingMoves(registry, remaining);
+  }
+  return result;
+}
+
 /**
 * @param ctx - cordis 上下文（web profile 的 host 合成）。
 * @param config - bundle 配置（默认值复用 settings 的默认项）。
 */
 export function apply(ctx, config = {}) {
+  const startupTimers = [];
   // 1) 设置分区：持久化到 ~/.dsh/storages（dsh-settings），live 生效。
   //    直接经 settings 服务注册（与当前 DSH 兼容：dsh-settings 0.1.2-alpha.3 已移除
   //    installSettingsSection / settingsNamespace，统一使用 ctx.settings.register）。
@@ -139,7 +292,7 @@ export function apply(ctx, config = {}) {
   });
 
   // 2) RPC 端点
-  ctx.inject(["connection", "workspaceRegistry", "sessionPersistence"], (c) => {
+  ctx.inject(["connection", "workspaceRegistry", "sessionPersistence", "sessions", "agents"], (c) => {
     c.connection.rpc.handle(
       "/dsh-session-xc",
       async (endpoint, payload) => {
@@ -172,99 +325,38 @@ export function apply(ctx, config = {}) {
             return { ok: false, error: { code: "bad-request", message: "targetWorkspaceId required", details: {} } };
           }
           
-          // 1. 检查会话是否活跃（在内存中）
-          const sessions = c.get("sessions");
-          const liveSession = sessions?.get(sessionId);
-          if (liveSession !== undefined) {
-            return { 
-              ok: false, 
-              error: { 
-                code: "session-active", 
-                message: "Cannot move a live session. Please close the session first.",
-                details: {}
-              } 
-            };
-          }
-          
           const registry = c.workspaceRegistry;
           
-          // 2. 获取目标工作区
-          const targetWs = registry.get(WorkspaceId(targetWorkspaceId));
-          if (!targetWs) {
-            return { ok: false, error: { code: "workspace-not-found", message: "Target workspace not found", details: {} } };
-          }
+          // 顺带应用历史排队（更早的条目可能已具备执行条件）
+          await flushPendingMoves(c);
           
-          // 3. 获取当前 session 信息
-          const header = registry.headers.get(sessionId);
-          if (!header) {
-            return { ok: false, error: { code: "session-not-found", message: "Session not found in persistence", details: {} } };
-          }
-          
-          const oldCwd = registry.sessionPaths.get(sessionId) || header.cwd;
-          const newCwd = targetWs.path;
-          if (typeof oldCwd !== "string" || oldCwd.length === 0 || typeof newCwd !== "string" || newCwd.length === 0) {
-            return { ok: false, error: { code: "session-path-missing", message: "Session workspace path is unavailable", details: {} } };
-          }
-          
-          // 4. 查找源工作区
-          let sourceWs = null;
-          // 以 workspace.sessionIds 作为归属真源，path 仅作兼容回退。
-          for (const ws of registry.list()) {
-            if (Array.isArray(ws.record?.sessionIds) && ws.record.sessionIds.includes(sessionId)) {
-              sourceWs = ws;
-              break;
+          // 常驻检查：新 DSH 中会话一旦被打开即在 Host 常驻激活（Agent 驻留到进程退出，
+          // 关闭浏览器标签页不会释放）。其内存 header 仍指向旧 cwd，直接移动文件会让续聊
+          // 写回旧路径、重启后触发重复会话 id 故障；因此排队到下次 Host 启动时执行。
+          const resident = c.sessions?.get(sessionId);
+          if (resident !== undefined) {
+            const targetWs = registry.get(WorkspaceId(targetWorkspaceId));
+            if (!targetWs) {
+              return { ok: false, error: { code: "workspace-not-found", message: "Target workspace not found", details: {} } };
             }
-          }
-          if (!sourceWs) {
-            for (const ws of registry.list()) {
-              if (ws.path === oldCwd) {
-                sourceWs = ws;
-                break;
-              }
+            const currentCwd = registry.sessionPaths.get(sessionId)
+              || registry.headers.get(sessionId)?.cwd
+              || resident.header?.cwd;
+            if (currentCwd && currentCwd === targetWs.path) {
+              return { ok: false, error: { code: "same-workspace", message: "Session already in target workspace", details: {} } };
             }
-          }
-          if (!sourceWs) {
-            return { ok: false, error: { code: "source-workspace-not-found", message: "Source workspace not found", details: {} } };
-          }
-          if (oldCwd === newCwd || sourceWs === targetWs) {
-            return { ok: false, error: { code: "same-workspace", message: "Session already in target workspace", details: {} } };
+            await enqueuePendingMove(registry, sessionId, targetWorkspaceId);
+            const busy = c.agents?.get(sessionId)?.status === "running";
+            return { ok: true, value: { sessionId, targetWorkspaceId, queued: true, busy, requiresRestart: true } };
           }
           
-          // 6. 执行文件移动
-          try {
-            await moveSessionFile(sessionId, oldCwd, newCwd);
-          } catch (err) {
-            return { 
-              ok: false, 
-              error: { 
-                code: "move-failed", 
-                message: `Failed to move session file: ${err.message}`,
-                details: { error: err.message }
-              } 
-            };
-          }
-          
-          // 7. 更新内存状态
-          // 7a. 更新 sessionPaths
-          registry.sessionPaths.set(sessionId, newCwd);
-          
-          // 7b. 更新目标工作区 record（添加 sessionId）
-          await targetWs.mutate((record) => ({
-            ...record,
-            sessionIds: record.sessionIds.includes(sessionId) 
-              ? record.sessionIds 
-              : [sessionId, ...record.sessionIds]
-          }));
-          
-          // 7c. 更新源工作区 record（移除 sessionId）
-          if (sourceWs) {
-            await sourceWs.mutate((record) => ({
-              ...record,
-              sessionIds: record.sessionIds.filter((id) => id !== sessionId)
-            }));
-          }
-          
-          return { ok: true, value: { sessionId, targetWorkspaceId } };
+          return await performSessionMove(c, sessionId, targetWorkspaceId);
+        }
+        
+        // ========== listPendingMoves ==========
+        if (endpoint === "listPendingMoves") {
+          const registry = c.workspaceRegistry;
+          return { ok: true, value: { pendingMoves: getPendingMoves(registry) } };
         }
         
         // ========== deleteSession ==========
@@ -462,8 +554,21 @@ export function apply(ctx, config = {}) {
       },
       { authority: "trusted-host" }
     );
+
+    // 启动后自动应用排队移动。浏览器重连可能早于 flush（会话重新常驻 → 条目顺延到下次启动）
+    // 或晚于 flush（直接应用成功），故安排两次尝试。
+    for (const delay of [1500, 6000]) {
+      const timer = setTimeout(() => {
+        flushPendingMoves(c).catch((err) => {
+          console.error("[dsh-session-xc] flushPendingMoves error:", err);
+        });
+      }, delay);
+      if (typeof timer.unref === "function") timer.unref();
+      startupTimers.push(timer);
+    }
   });
   
   return function cleanup() {
+    for (const timer of startupTimers) clearTimeout(timer);
   };
 }
