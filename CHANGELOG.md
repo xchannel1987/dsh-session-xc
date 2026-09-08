@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.2] - 2026-09-08
+
+### Added
+- package.json 声明 `engines.dsh: ">=0.1.2-alpha.3"`，供 dsh-market 展示宿主版本要求并参与兼容性过滤；无功能改动。
+
 ## [0.8.1] - 2026-09-07
 
 ### Fixed
