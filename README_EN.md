@@ -95,6 +95,13 @@ Restart DSH after installation. Enhanced features will appear in sidebar workspa
 - **Workspace Data**: RPC `workspace.list`
 - **Session Data**: RPC `sessions.list`
 - **Polling Refresh**: 5-second interval + immediate refresh when page visible
+- **Move safety (v0.9.0+)**: compatible with DSH 0.1.5 session format generations
+  (`session.jsonl.zstd` / `session.vN.jsonl.zstd` coexisting in one directory): a move rewrites
+  only the numerically highest generation's header frame; older generations ride along untouched
+- **RPC transport (v0.9.0+)**: on DSH 0.1.5+ endpoints are served under the exact routes
+  `/api/dsh-session-xc/<endpoint>` (inheriting the official /api auth fence), with automatic
+  fallback to the legacy `/dsh-session-xc` channel (0.1.5's `connection.rpc.handle` has a
+  third-party registration regression; the legacy channel needs a host-side patch there)
 
 ## 📱 Mobile Adaptation
 

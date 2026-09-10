@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.9.0] - 2026-09-10
+
+### Fixed
+- **适配 DSH 0.1.5 服务端 RPC 注册失败（官方回归，服务端功能全灭）**：0.1.5 的
+  `connection.rpc.handle` 内部在调用方 fiber 执行 `owner.effect(() => owner.webServer.register(route))`，
+  第三方插件无论怎样声明 inject 都被 cordis 以 `cannot get property "webServer" without inject`
+  拒绝（离线用真实 cordis 4.0.2 + 官方源码复现；线上表现为 `POST /dsh-session-xc/*` 全 405），
+  恢复/删除/批量删除/移动/排队查询集体失效。现改为 `connection.fetch.register` 把五个端点挂载为
+  `/api/dsh-session-xc/<endpoint>` 精确 Fetch 路由（复用官方 /api 通道的 Host/Origin 围栏、浏览器
+  认证与 client-request 信封），旧通道保留 try/catch 兜底（<=0.1.4，或 0.1.5+ 已在
+  cordis.patch.yml 给 connection bundle 补注 webServer 的环境）；客户端统一先走 /api、
+  transport 失败自动回退旧通道。
+- **适配会话格式代际（DSH 0.1.5 持久层 v1-v3，修复移动的数据危险路径）**：会话日志分"代际"文件
+  （v0=`session.jsonl(.zstd)`，现行 v3=`session.v3.jsonl(.zstd)`；旧会话被打开时官方迁移发布新代
+  且**保留旧代文件**），官方只认编号最高代的 header 并校验其 cwd 与所在目录一致
+  （`assertStoredIdentity`）。0.8.x 移动逻辑只认 v0 文件名：仅含 v3 的会话移动报"日志不存在"；
+  v0+v3 并存的已迁移会话移动后 v3（cwd 仍指旧目录）随目录带走 → 官方打开时判定身份不一致、
+  `listArtifacts` 抛错可**拖垮整个会话列表**。现移动改为扫描全部规范代际文件、只重写最高代
+  首帧 header（其余字段与事件帧逐字节保留），低代历史原样随行，目标重复检查与混合编码
+  拒绝同步覆盖所有代际。
+- 客户端移除对 0.1.5 已删除的 `connection.api` 门面的引用（失效的 `api.workspace.list`
+  轮询回退删除；主路径 store 订阅不受影响）。
+- 移动端"恢复会话后保持侧边栏展开"的按钮 aria-label 兼容 0.1.5 新官方文案「打开侧边栏」
+  （旧文案「展开侧边栏」保留兜底）。
+- `package.json` 的 `dsh.client.inject` 移除 0.1.5 已删除的 `@deepseek-ai/dsh-client-ui-slots`，
+  替换为 `slots` 服务新提供方 `@deepseek-ai/dsh-client-ui-renderer`。
+
+### Added
+- 服务端启动时打印 `[dsh-session-xc] RPC transports mounted: ...`，两种传输的挂载结果可直接
+  从 `~/.dsh/dsh-web.log` 观察（一个都挂不上时打 FATAL）。
+
 ## [0.8.2] - 2026-09-08
 
 ### Added

@@ -93,6 +93,11 @@ npm install dsh-session-xc
 - **工作区数据**：RPC `workspace.list`
 - **会话数据**：RPC `sessions.list`
 - **轮询刷新**：5 秒间隔 + 页面可见时即时刷新
+- **移动安全（v0.9.0+）**：兼容 DSH 0.1.5 会话格式代际（`session.jsonl.zstd` / `session.vN.jsonl.zstd`
+  多代并存）：移动只重写编号最高代文件的 header 帧，低代历史文件逐字节原样随行
+- **RPC 通道（v0.9.0+）**：DSH 0.1.5+ 走 `/api/dsh-session-xc/<endpoint>` 精确路由（复用官方认证围栏），
+  transport 失败自动回退旧 `/dsh-session-xc` 通道（0.1.5 的 `connection.rpc.handle` 存在第三方插件
+  注册回归，旧通道在 0.1.5 需宿主侧补丁才可用）
 
 ## 📱 移动端适配
 

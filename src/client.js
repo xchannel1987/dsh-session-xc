@@ -1,8 +1,13 @@
-// dsh-session-xc 浏览器端 bundle（手写，无构建步骤）v0.8.0
+// dsh-session-xc 浏览器端 bundle（手写，无构建步骤）v0.9.0
 //
 // v0.8.0 适配：DSH 0.1.2+ 会话常驻——被拖拽的会话若在本进程内已激活，
 //   Host 会将其移动排队（pendingMoves），重启 DSH 后自动应用；客户端
 //   区分"已移动"与"已排队"提示，并在启动后提示仍未应用的排队移动。
+// v0.9.0 适配（DSH 0.1.5）：
+//   1) RPC 优先走 /api 精确路由（dsh-session-xc/<endpoint>，服务端 connection.fetch.register 挂载、
+//      复用官方认证围栏）；transport 失败自动回退旧 /dsh-session-xc 通道。
+//   2) connection.api 已随 DSH 0.1.5 移除：废除失效的 api.workspace.list 轮询回退。
+//   3) 移动端侧边栏展开按钮官方文案改为「打开侧边栏」，新旧双文案并配。
 //
 // 功能：
 //   徽标：工作区名称旁显示可见会话数 (N)（嵌入标题 span，同一行、0 不显示）
@@ -46,6 +51,9 @@ window.__ModuleLoader__.load({
     var ROW_SELECTOR = '[role="treeitem"][aria-expanded]';
     var REFRESH_MS = 5000;
     var RPC_CHANNEL = "/dsh-session-xc";
+    // DSH 0.1.5+：服务端把端点挂到 /api/dsh-session-xc/<endpoint>（官方共享 /api 通道内精确路由），
+    // 客户端 rpc.call("/api", RPC_API_PREFIX + name, payload) 调之；失败回退旧 RPC_CHANNEL。
+    var RPC_API_PREFIX = "dsh-session-xc/";
     var BADGE_ATTR = "data-dstc-badge";
     var TITLE_ATTR = "data-dstc-title";
     var BTN_ATTR = "data-dstc-archive-btn";
@@ -74,7 +82,18 @@ window.__ModuleLoader__.load({
       var instance = { cleanup: null };
       if (typeof window !== "undefined") window[instanceKey] = instance;
       var connection = ctx.get("connection");
-      var api = connection && connection.api;
+      // v0.9.0 RPC 传输：优先 /api 精确路由；transport 异常或网关"未知端点"响应时回退旧通道。
+      function callPluginRpc(endpoint, payload) {
+        return connection.rpc.call("/api", RPC_API_PREFIX + endpoint, payload).then(function (res) {
+          var code = res && res.ok === false && res.error ? res.error.code : null;
+          if (code === "unknown-endpoint" || code === "gateway/unknown-endpoint" || code === "gateway/not-found" || code === "gateway/rpc-not-found") {
+            return connection.rpc.call(RPC_CHANNEL, endpoint, payload);
+          }
+          return res;
+        }).catch(function () {
+          return connection.rpc.call(RPC_CHANNEL, endpoint, payload);
+        });
+      }
 
       // v0.5.0: 获取 DSH 核心的 workspaces 服务
       var workspacesService = ctx.get("workspaces");
@@ -714,7 +733,7 @@ window.__ModuleLoader__.load({
         var targetWs = workspaceItems.find(function (ws) { return ws.workspaceId === targetWorkspaceId; });
         var confirmMsg = "确定将此会话移动到工作区“" + (targetWs ? targetWs.title : "目标工作区") + "”吗？\n\n移动后会话将从当前工作区移出。";
         if (!window.confirm(confirmMsg)) return;
-        connection.rpc.call(RPC_CHANNEL, "moveSession", {
+        callPluginRpc("moveSession", {
           sessionId: sessionId,
           targetWorkspaceId: targetWorkspaceId
         }).then(function (res) {
@@ -930,7 +949,7 @@ window.__ModuleLoader__.load({
         var node = panel;
         while (node && node !== document.body) {
           if (node.querySelector) {
-            var toggle = node.querySelector('button[aria-label="展开侧边栏"]');
+            var toggle = node.querySelector('button[aria-label="打开侧边栏"], button[aria-label="展开侧边栏"]');
             if (toggle) { sidebarRoot = node; toggle.click(); break; }
           }
           node = node.parentNode;
@@ -1232,7 +1251,7 @@ window.__ModuleLoader__.load({
           button.style.opacity = "1";
         };
         var result;
-        try { result = Promise.resolve(connection.rpc.call(RPC_CHANNEL, "unarchiveSession", { sessionId: item.sessionId })); }
+        try { result = callPluginRpc("unarchiveSession", { sessionId: item.sessionId }); }
         catch (e) { resetButton(); toast("恢复失败"); return; }
         result.then(function (res) {
           if (res && res.ok) {
@@ -1275,9 +1294,9 @@ window.__ModuleLoader__.load({
         // 调用 RPC
         var result;
         try {
-          result = Promise.resolve(connection.rpc.call(RPC_CHANNEL, "deleteSession", { 
-            sessionId: item.sessionId 
-          }));
+          result = callPluginRpc("deleteSession", {
+            sessionId: item.sessionId
+          });
         } catch (e) {
           resetDeleteButton(button, row);
           toast("删除失败");
@@ -1393,10 +1412,10 @@ window.__ModuleLoader__.load({
         // 调用 RPC
         var result;
         try {
-          result = Promise.resolve(connection.rpc.call(RPC_CHANNEL, "deleteAllArchivedSessions", {
+          result = callPluginRpc("deleteAllArchivedSessions", {
             sessionIds: sessionIds,
             workspaceId: workspaceId
-          }));
+          });
         } catch (e) {
           if (button) {
             button.disabled = false;
@@ -1613,7 +1632,7 @@ window.__ModuleLoader__.load({
         pendingNoticeTimer = setTimeout(function () {
           pendingNoticeTimer = null;
           try {
-            connection.rpc.call(RPC_CHANNEL, "listPendingMoves", {}).then(function (res) {
+            callPluginRpc("listPendingMoves", {}).then(function (res) {
               var list = res && res.ok && res.value && Array.isArray(res.value.pendingMoves) ? res.value.pendingMoves : [];
               if (list.length > 0) {
                 toast("有 " + list.length + " 个会话移动待应用：重启 DSH 后会自动完成（期间请勿删除相关会话文件）");
@@ -1635,31 +1654,8 @@ window.__ModuleLoader__.load({
         scheduleApply();
         injectDragListeners();
       }
-      // v0.5.0: 如果无法订阅 workspaces 服务，回退到旧的轮询方式
-      if (!workspacesUnsubscribe && api && api.workspace && typeof api.workspace.list === "function") {
-        function refreshFallback() {
-          try {
-            var res = Promise.resolve(api.workspace.list({}));
-            res.then(function (r) {
-              if (!r || !r.result || !r.result.ok) return;
-              var value = r.result.value || {};
-              var items = Array.isArray(value.items) ? value.items : [];
-              var archivedSessionIds = Array.isArray(value.archivedSessionIds) ? value.archivedSessionIds : [];
-              // 降级 RPC 没有 sessions.list 的双基线投影，不能可靠排除临时 blank；
-              // 因此初始化阶段不展示计数，等待核心 store 订阅恢复后再计算。
-              if (sessionsListForSubscription && typeof sessionsListForSubscription.getSnapshot === "function") {
-                var fallbackSessions = sessionsListForSubscription.getSnapshot();
-                if (fallbackSessions && fallbackSessions.phase === "ready") {
-                  computeArchiveData({ items: items, archivedSessionIds: archivedSessionIds, phase: "ready", baselinesReady: true }, fallbackSessions);
-                }
-              }
-            }).catch(function () { /* 瞬时失败 */ });
-          } catch (e) { /* ignore */ }
-        }
-        timer = setInterval(refreshFallback, REFRESH_MS);
-        // 延迟调用，等待 DSH 核心初始化完成
-        setTimeout(refreshFallback, 100);
-      }
+      // v0.9.0: 删除 v0.5.0 时代的 api.workspace.list 轮询回退——DSH 0.1.5 已移除 connection.api
+      // 门面（该分支永不触发）；workspaces/sessions store 订阅在全部受支持版本内始终可用。
 
       var cleanup = function () {
         if (typeof window !== "undefined" && window[instanceKey] === instance) window[instanceKey] = null;
