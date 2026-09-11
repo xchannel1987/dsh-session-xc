@@ -7,7 +7,7 @@
 
 [中文](README.md) | [English](README_EN.md)
 
-**DSH Session Management Enhancement Plugin** — Powerful session management for sidebar workspaces including statistics display, archive recovery, deletion, and cross-workspace moving.
+**DSH Session Management Enhancement Plugin** — Powerful session management for sidebar workspaces including statistics display, archive recovery, deletion, cross-workspace moving, and automatic first-round session naming.
 
 ## ✨ Core Features
 
@@ -67,6 +67,21 @@ npm install dsh-session-xc
 
 Restart DSH after installation. Enhanced features will appear in sidebar workspace list.
 
+### 🤖 First-Round Auto Naming (v0.11.0)
+About 1.5s after a new top-level session completes its first round (turn/end), the plugin calls the
+LLM using **the session's own model** (request-header provider/model, no configuration) to rename the
+session meaningfully, using the full first round as context (user prompts + assistant answer, reasoning dropped).
+
+- **Scope (important)**: active only on **non-official DeepSeek routes** (provider ≠ `deepseek-official`) —
+  official routes already have working built-in LLM naming (the official adapter disables model thinking for
+  session-title calls), so the plugin steps aside there.
+- **Why needed**: the built-in title provider fails on "reasoning model + liteLLM/pi-ai" routes
+  (its 64-token budget is consumed by chain-of-thought, output text stays empty), leaving only the
+  first-few-words fallback; this plugin uses a 2048-token budget plus full-round context.
+- Committed via the official `sessionTitle.rename` (`session/title` event — latest seq wins and is
+  pinned; a title you renamed manually is never overwritten). One-shot per session; subagent sessions excluded.
+- Toggle: "First-round auto naming" in the settings card (default on).
+
 ## ⚙️ Configuration
 
 | Option | Default | Description |
@@ -75,6 +90,7 @@ Restart DSH after installation. Enhanced features will appear in sidebar workspa
 | showArchiveEntry | true | Show archived sessions entry on workspace rows |
 | enableSessionMove | true | Enable drag-and-drop moving |
 | showActiveFilterEntry | true | Show the “only active sessions” toggle left of the search button |
+| autoTitleFirstRound | true | Auto-name new sessions after their first round (non-official model routes only; official routes already have built-in LLM naming) |
 
 ## 🎮 Usage Guide
 

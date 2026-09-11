@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.11.0] - 2026-09-11
+
+### Added
+- **新会话首轮自动起名**：每个新顶级会话第一轮结束（turn/end）后延迟约 1.5s，用**会话自身的模型**
+  （request header 的 provider/model，无需配置）自动调用一次大模型（maxTokens=2048、60s 超时、
+  purpose=session-title），上下文取第一轮的用户提问 + 助手回答（思维链块丢弃），生成有意义的标题后
+  经官方 `sessionTitle.rename` 提交（追加 `session/title` 事件，seq 最新者胜出且 source=user 钉住）。
+  - **仅非官方模型路由生效**（provider ≠ `deepseek-official`）：官方 DeepSeek 适配器对 session-title
+    强制 `thinking: disabled`，内置 LLM 起名本身可用，本插件让位不重复调用；设置项 hint 与 README
+    均写明该限制。
+  - **背景/根因**：内置 `session-title-first-prompt-llm` 的 `maxOutputTokens: 64` 对推理模型
+    （v4-flash/v4-pro/qwen3.8 等）必挂——64 token 被思维链吃光、正文为空（直连 liteLLM 实测
+    `finish_reason=length`、`content=""`），只剩"第一轮前几个字"兜底名；pi-ai/liteLLM 适配器
+    没有官方 deepseek 适配器那样的 session-title thinking 特判。
+  - **一次性 + 不覆盖用户手动名**：每会话仅触发一次；已存在 user 来源标题（手动改名）时跳过；
+    仅处理无 parentSession 的顶级会话（subagent 不处理）；会话转瞬失效/无可用 llm 服务/无路由时安全跳过。
+  - 设置卡新增「新会话首轮自动起名」开关（默认开，`autoTitleFirstRound`），关闭后回退官方默认行为。
+  - 服务端实现零新依赖（按 dsh-llm 流式 chunk 协议自带 ~30 行纯文本组装，不 import 平台包），
+    单元可测函数经 `_internal` 导出。
+
 ## [0.10.5] - 2026-09-11
 
 ### Fixed
