@@ -46,6 +46,15 @@ Drag sessions to target workspace for moving:
   Dropping such a session queues the move persistently; it applies automatically on the
   next DSH startup. Sessions never opened still move instantly.
 
+### 🔍 Active Sessions Filter (v0.10.0)
+A “show only active sessions” toggle sits left of the drawer search button:
+
+- **Active =** session last activity (updatedAt) falls on the local calendar “today”; archived/subagent sessions excluded
+- **One click** to show only today-active sessions and their workspaces; click again to restore the full list
+- **Persistent** toggle state (localStorage); the pressed style is highlighted in accent blue
+- **Search-friendly**: filtering pauses while a search query is active and resumes once cleared
+- **Empty hint**: shows “no sessions active today” when everything would be hidden
+
 ## 📦 Installation
 
 ```bash
@@ -63,7 +72,9 @@ Restart DSH after installation. Enhanced features will appear in sidebar workspa
 | Option | Default | Description |
 |--------|---------|-------------|
 | showSessionCount | true | Show session count statistics |
-| enableDragMove | true | Enable drag-and-drop moving |
+| showArchiveEntry | true | Show archived sessions entry on workspace rows |
+| enableSessionMove | true | Enable drag-and-drop moving |
+| showActiveFilterEntry | true | Show the “only active sessions” toggle left of the search button |
 
 ## 🎮 Usage Guide
 
@@ -83,6 +94,12 @@ Restart DSH after installation. Enhanced features will appear in sidebar workspa
 3. Mobile: Swipe left and tap "Delete"
 4. Confirm deletion
 
+### Show Only Active Sessions
+1. Click the funnel button left of the drawer search button (pressed style = accent blue tint)
+2. The list keeps only sessions touched today and their workspaces; collapsed groups that still
+   have active sessions stay visible — expand the header to reveal them
+3. Click again to restore the full list; the toggle survives page reloads
+
 ### Move Sessions to Other Workspaces
 1. Long press session row to start dragging
 2. Drag to target workspace or any session under it
@@ -94,7 +111,12 @@ Restart DSH after installation. Enhanced features will appear in sidebar workspa
 
 - **Workspace Data**: RPC `workspace.list`
 - **Session Data**: RPC `sessions.list`
-- **Polling Refresh**: 5-second interval + immediate refresh when page visible
+- **Refresh**: store subscriptions + immediate refresh when page visible + 60s heartbeat
+  (since v0.10.0 filter state converges automatically across midnight)
+- **Activity data (v0.10.0)**: `updatedAt` from the sessions store (same field the official
+  relative-time labels use); row→session mapping reads official components' React fiber
+  (`props.node` / `props.group.sessions`, the full set incl. collapsed rows), falling back to
+  title matching with fail-open behavior
 - **Move safety (v0.9.0+)**: compatible with DSH 0.1.5 session format generations
   (`session.jsonl.zstd` / `session.vN.jsonl.zstd` coexisting in one directory): a move rewrites
   only the numerically highest generation's header frame; older generations ride along untouched

@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.10.3] - 2026-09-11
+
+### Changed
+- **筛选按钮样式与官方图标按钮完全一致**：不再手写内联样式，改为运行时复制官方搜索按钮的
+  实际 className（28px 圆形、hover 出现主题圆形底色指示、颜色随 header `color:inherit`），
+  官方升级更换 CSS module 哈希前缀也自动跟随；另加插件兜底类（复刻官方 `.searchButton` 规则，
+  官方类名读取失败时观感不变）。按压态改由专用类 + `!important` 实现（主题蓝 16% 底 +
+  主色图标，hover 加深至 24%），不再用内联 style 以免压掉官方 hover。
+
+## [0.10.2] - 2026-09-11
+
+### Fixed
+- **筛选按钮被甩到头部最左侧（0.10.1 的修复引入）**：官方 `.searchSlot` 自带
+  `margin-left:auto`（搜索框组推右对齐），按钮挂在 slot 之前时 auto 间隙落在按钮与 slot
+  之间。现将 auto 转移到按钮自身（`margin-left:auto`）并把 slot 的 `margin-left` 内联清零
+  （不触碰官方样式表；按钮移除/插件卸载时还原）。按钮随搜索框组一起靠右、紧贴搜索图标
+  左侧；展开搜索时 slot（flex:1）变宽，按钮自动让位。
+
+## [0.10.1] - 2026-09-11
+
+### Fixed
+- **只看活跃会话按钮遮挡官方搜索按钮（0.10.0 引入）**：官方折叠态 `.searchSlot{max-width:28px}`
+  且 `sectionHeader{overflow:hidden}`，按钮 mount 最初注入 slot 内部（搜索图标之前）导致
+  28px 可视窗被 22px 按钮占满、搜索图标被挤出裁切（“搜索按钮不见了”）。现挂点外移一层：
+  `sectionHeader` 内、`searchSlot` 之前——视觉仍是搜索图标紧邻左侧，展开搜索时 slot 变宽、
+  按钮（flex:none）自动让位；旧位置的残留 mount 由幂等去重循环在下一帧自动清理。
+
+## [0.10.0] - 2026-09-11
+
+### Added
+- **只看活跃会话筛选**：工作区抽屉头部搜索图标按钮**左侧**注入开关按钮（自绘漏斗图标 +
+  官方 Tooltip；按压态主题蓝底色高亮，`aria-pressed` 标记）。开启后仅显示 updatedAt 落在本地
+  日历今天的会话及其所在工作区组（`groupSection` 整体隐藏，不留空隙），再次点击恢复完整列表。
+  - 开关状态 localStorage 持久化（键 `dsh-session-xc.onlyActive`），刷新后保持；60s 心跳使
+    跨零点后筛选态自动收敛；判定口径与徽标一致（归档/subagent 会话不计入）。
+  - 行↔会话映射优先读官方行组件 React fiber（`SessionNodeItem.props.node` /
+    `ProjectRowItem.props.group.sessions` 全集，覆盖折叠未渲染行；折叠组含活跃会话时组头
+    保留，点开即可见）；fiber 不可用时回退 store/标题匹配，歧义一律保持可见（fail-open）。
+  - 搜索词非空（官方搜索结果视图接管列表）时筛选暂停、列表原样，清空后自动恢复；全部隐藏时
+    列表区显示“今天没有活跃会话”提示；flat 平铺视图同规则只过滤会话行。
+- 设置卡片“会话增强”新增第 4 个开关 `showActiveFilterEntry`（默认开）：关闭后按钮移除并恢复
+  完整列表（localStorage 已存的筛选值保留，重新开启时恢复按压态）。
+- 服务端设置命名空间新增 `showActiveFilterEntry: boolean`（默认 true）；本功能纯客户端，无新 RPC。
+
+### Known Limitations
+- 官方“展开 N 个会话”按钮的计数不感知筛选（数字含被隐藏的非活跃会话，展开后行仍会被正确过滤）；
+  筛选期间被隐藏的工作区组无法作为拖拽移动落点（display:none 的自然结果）；
+  工作区徽标计数仍显示全部可见会话数，不随筛选变化（刻意保留总体信息）。
+
 ## [0.9.0] - 2026-09-10
 
 ### Fixed
