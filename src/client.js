@@ -1,4 +1,6 @@
-// dsh-session-xc 浏览器端 bundle（手写，无构建步骤）v0.10.3
+// dsh-session-xc 浏览器端 bundle（手写，无构建步骤）v0.10.5
+// v0.10.5 修复：筛选开启时代点官方"展开其余 N 个会话"并隐藏该按钮（N 含非活跃会话
+//   属误导，且活跃行可能未渲染）；关闭/暂停筛选时把自动展开过的组回缩还原。
 // v0.10.1 修复：筛选按钮挂点从 searchSlot 内部外移到 sectionHeader（slot 之前），
 //   避免官方折叠态 28px 搜索槽 overflow 裁切把搜索图标挤出可视区。
 // v0.10.2 修复：margin-left:auto 从 slot 交接给按钮自身，使其紧贴搜索图标左侧
@@ -53,12 +55,13 @@ window.__ModuleLoader__.load({
     var React = require("react");
 
     var NS = "dsh-session-xc";
-    var CONFIG_DEFAULTS = { showSessionCount: true, showArchiveEntry: true, enableSessionMove: true, showActiveFilterEntry: true };
+    var CONFIG_DEFAULTS = { showSessionCount: true, showArchiveEntry: true, enableSessionMove: true, showActiveFilterEntry: true, autoTitleFirstRound: true };
     var FIELDS = [
       { key: "showSessionCount", label: "会话数展示", hint: "工作区名称旁显示可见会话数和已完成未读数 (N活跃, M未读)，为 0 时不显示" },
       { key: "showArchiveEntry", label: "已归档会话按钮", hint: "工作区操作区显示归档按钮，点击可查看并恢复已归档会话" },
       { key: "enableSessionMove", label: "跨工作区移动会话", hint: "启用后可拖拽会话到其他工作区" },
-      { key: "showActiveFilterEntry", label: "只看活跃会话按钮", hint: "抽屉搜索按钮左侧显示\"只看活跃会话\"开关，开启后仅显示今天有操作的会话及其工作区；开关状态刷新后保持" }
+      { key: "showActiveFilterEntry", label: "只看活跃会话按钮", hint: "抽屉搜索按钮左侧显示\"只看活跃会话\"开关，开启后仅显示今天有操作的会话及其工作区；开关状态刷新后保持" },
+      { key: "autoTitleFirstRound", label: "新会话首轮自动起名", hint: "新会话第一轮结束后延迟片刻，自动调用大模型（用会话自身模型）把标题改成有意义的名字。仅在非官方模型路由下生效（官方 DeepSeek 路由已有内置 LLM 起名，本插件让位）；关闭后回退官方默认行为" }
     ];
 
     var ROW_SELECTOR = '[role="treeitem"][aria-expanded]';
@@ -90,6 +93,7 @@ window.__ModuleLoader__.load({
     var OFFICIAL_GROUP_SECTION_SELECTOR = '[class*="groupSection"]';
     var OFFICIAL_LIST_AREA_SELECTOR = '[class*="listArea"]';
     var OFFICIAL_SESSION_TITLE_SELECTOR = '[class*="_title"]';
+    var OFFICIAL_OVERFLOW_BUTTON_SELECTOR = '[class*="sessionOverflowButton"]';
 
     var inject = ["connection", "slots", "settingsScope", "sessions", "workspaces"];
 
@@ -172,6 +176,9 @@ window.__ModuleLoader__.load({
       var metaByIdCache = new Map();
       var archivedIdSet = new Set();
       var heartbeatTimer = null;
+      // v0.10.5：筛选开启时自动展开被官方折叠的组并记录（用于关闭/暂停时回缩），filterAppliedRound 标记上一轮筛选是否生效
+      var filterAppliedRound = false;
+      var autoExpandedSections = [];
       var panel = null;
       var openWorkspaceTitle = null;
       var timer = null;
@@ -1049,15 +1056,52 @@ window.__ModuleLoader__.load({
         return (span.textContent || "").trim();
       }
 
+      /** v0.10.5 修复：会话多的组被官方折叠（预览行 + "展开其余 N 个会话"），筛选时 N 含非活跃
+       *  会话、误导且活跃行可能没渲染。筛选开启：可见组若处于折叠态则代点展开，并把该按钮
+       *  静默隐藏（展开后已无意义）；只记录"本筛选代点过"的组，关闭/暂停筛选时回缩还原。 */
+      function autoExpandVisibleSections(sections) {
+        for (var k = 0; k < sections.length; k++) {
+          var section = sections[k];
+          var btn = section.querySelector(OFFICIAL_OVERFLOW_BUTTON_SELECTOR);
+          if (!btn) continue;
+          if (btn.getAttribute("aria-expanded") !== "true") {
+            var seen = false;
+            for (var a = 0; a < autoExpandedSections.length; a++) { if (autoExpandedSections[a] === section) { seen = true; break; } }
+            if (!seen) {
+              autoExpandedSections.push(section);
+              try { btn.click(); } catch (e) { /* ignore */ }
+            }
+          }
+          hideFiltered(btn);
+        }
+      }
+
+      function revertAutoExpandedGroups() {
+        var list = autoExpandedSections;
+        autoExpandedSections = [];
+        for (var i = 0; i < list.length; i++) {
+          var section = list[i];
+          if (!section || !document.contains(section)) continue;
+          var btn = section.querySelector(OFFICIAL_OVERFLOW_BUTTON_SELECTOR);
+          if (!btn || btn.getAttribute("aria-expanded") !== "true") continue;
+          try { btn.click(); } catch (e) { /* ignore */ }
+        }
+      }
+
       function applyActiveFilter() {
         if (typeof document === "undefined") return;
         // apply() 同步早期（行常量尚未初始化、列表未渲染）时跳过，后续轮次收敛
         if (typeof SESSION_ROW_SELECTOR !== "string") return;
-        if (!onlyActive || config.showActiveFilterEntry === false || searchViewActive()) {
+        var filterOn = onlyActive && config.showActiveFilterEntry !== false && !searchViewActive();
+        if (!filterOn) {
+          if (filterAppliedRound) revertAutoExpandedGroups(); // 关闭或暂停筛选：把自动展开过的组点回去
+          filterAppliedRound = false;
           restoreAllFiltered();
           return;
         }
+        filterAppliedRound = true;
         var titleSets = null;
+        var visibleSections = [];
         var anyGroupVisible = false;
         var anySessionVisible = false;
         var sawAnyRow = false;
@@ -1091,8 +1135,16 @@ window.__ModuleLoader__.load({
               }
             }
           }
-          if (hasActive) { showFiltered(container); anyGroupVisible = true; } else { hideFiltered(container); }
+          if (hasActive) {
+            showFiltered(container);
+            anyGroupVisible = true;
+            var section = row.closest ? row.closest(OFFICIAL_GROUP_SECTION_SELECTOR) : null;
+            if (section) visibleSections.push(section);
+          } else {
+            hideFiltered(container);
+          }
         }
+        autoExpandVisibleSections(visibleSections);
 
         // 2) 会话行（组内 + flat 顶层同一规则）：fiber node.updatedAt；回退标题集
         var sRows = document.querySelectorAll(SESSION_ROW_SELECTOR);
@@ -2052,6 +2104,7 @@ window.__ModuleLoader__.load({
             }
             var badges = document.querySelectorAll("[" + BADGE_ATTR + "]");
             for (var j = 0; j < badges.length; j++) badges[j].remove();
+            if (filterAppliedRound) { try { revertAutoExpandedGroups(); } catch (e) { /* ignore */ } }
             restoreAllFiltered();
             var slotEl = document.querySelector(OFFICIAL_SEARCH_SLOT_SELECTOR);
             if (slotEl && slotEl.style.marginLeft) slotEl.style.marginLeft = "";
