@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.4] - 2026-09-11
+
+### Changed
+- **`@deepseek-ai/dsh-settings` 从 dependencies 降级为 optional peerDependencies**（运行期行为不变）。0.8.x 起设置分区改走 `ctx.settings.register` 服务接口，本插件已不再 import 该 npm 包（全仓 grep 只在注释里出现），这份硬依赖属迁移遗留。留着有两个副作用：
+  1. 被 pnpm hoisted 布局顶到 profile 顶层，`dsh plugin add` 每次报 `✕ unmet peer @deepseek-ai/dsh-settings@^0.1.5-rc.1: found 0.1.1-rc.2`；
+  2. 更要紧的是这份 0.1.1-rc.2 副本会**遮蔽**同 profile 里真正 import 它的插件（dsh-better-sidebar 静态 import `SettingsConflictError`，peer 要求 ^0.1.5-rc.1），使其按 node_modules 就近解析拿到旧版。改为 optional peer 后 profile 不再落地旧副本，解析回落到 `~/.dsh/profiles/node_modules` 那层宿主依赖镜像（dsh-app-boot 的 profile module fallback），版本与宿主一致。
+- 声明为 optional 的意义：`@deepseek-ai/dsh-settings` 由宿主提供、profile 的 `autoInstallPeers: false` 也决定它不该被装进 profile，故不进入 pnpm 的 missing-peer 告警。
+
 ## [0.10.3] - 2026-09-11
 
 ### Changed
