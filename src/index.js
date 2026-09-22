@@ -27,6 +27,12 @@
 //         0.1.5 的 connection.rpc.handle 在第三方插件 fiber 内抛 "cannot get property
 //         webServer without inject"（官方回归，实测+离线复现确认）；旧通道 try/catch 兜底，
 //         客户端优先 /api、transport 失败自动回退旧通道。
+//      ③ 投影缓存 identity 同步（0.11.1）：官方列表标题走 sessionProjectionCache 的零 I/O
+//         提示，record identity 与 header 严格匹配（含 cwd）。0.11.0 及以前移动只重写
+//         header.cwd，旧 record 被判"无关"丢弃 → 列表标题丢失，客户端回退显示
+//         basename(cwd)=工作区名（"会话改名成工作区名、找不到"），打开会话一次才自愈。
+//         现移动成功后同步改写 record 的 identity.cwd（官方 put() 写链优先、磁盘原子改写
+//         兜底），标题提示跨移动/重启不丢。见 repairProjectionCacheIdentity。
 //   5. 功能 4（删除已归档会话）：从 archivedSessionIds 移除并删除会话文件，释放存储空间。
 //   6. 功能 5（新会话第一轮自动起名，v0.11.0）：内置 session-title 的 LLM provider 在
 //      "推理模型 + liteLLM/pi-ai 路由"下必挂（maxOutputTokens=64 被思维链吃光、正文为空，
@@ -488,7 +494,112 @@ async function performSessionMove(c, sessionId, targetWorkspaceId) {
     sessionIds: (Array.isArray(record.sessionIds) ? record.sessionIds : []).filter((id) => id !== sessionId)
   }));
 
+  // 6. 修复投影缓存 identity（0.11.1，best-effort）：官方列表标题走 sessionProjectionCache
+  //    的零 I/O 提示，record identity 与磁盘 header 严格匹配（含 cwd）；只改 header 不改
+  //    缓存 record 会让标题提示整体失效，列表回退显示 basename(cwd)=工作区名。
+  //    失败不否决移动本身（文件与注册表已一致；标题提示在会话被打开一次后也会自愈）。
+  try {
+    const repair = await repairProjectionCacheIdentity(c, sessionId, header, newCwd);
+    if (repair.repaired) {
+      console.log(`[dsh-session-xc] projection-cache identity repaired for ${sessionId} (via ${repair.via})`);
+    } else if (repair.reason !== "no-record" && repair.reason !== "already-current") {
+      console.warn(`[dsh-session-xc] projection-cache identity not repaired for ${sessionId}: ${repair.reason}`);
+    }
+  } catch (err) {
+    console.warn(`[dsh-session-xc] projection-cache repair error for ${sessionId}: ${err && err.message ? err.message : String(err)}`);
+  }
+
   return { ok: true, value: { sessionId, targetWorkspaceId } };
+}
+
+// ========== 投影缓存 identity 修复（0.11.1） ==========
+//
+// 官方会话列表的标题是"零 I/O 提示"：dsh-api-session-controller.projectionsFor 以磁盘
+// header 为 identity 见证查 sessionProjectionCache（cachedSnapshot / cachedPredecessorTitle），
+// 其 lifecycleIdentityMatches 要求 record.identity 与 header 的 createdAt+cwd+isSeeded+
+// inheritedEventCount 严格相等、formatVersion 匹配（predecessor 提示则要求更旧的
+// formatVersion）。移动会话重写了 header.cwd，旧 checkpoint record 的 identity 仍绑定旧
+// cwd → record 被判"无关"整体读作不存在 → 列表行没有 title 投影 → 客户端 displayTitleOf
+// 回退 basename(cwd) = 工作区名（用户视角：会话"改名成工作区名、找不到了"）。打开会话
+// 一次才会自愈（hydrate 从日志重折叠 + checkpoint 以新 identity 重写 record）。
+//
+// 修复策略（best-effort，全部包在 try/catch 中，不影响移动本身）：
+//   1. 直接读磁盘 record 文件（per-record 布局：<storages>/session_projcache/sessions/
+//      <id>.json，形如 {version, record:{identity, rows}}）拿到存储 identity 原样——不做
+//      任何 identity 猜测；被移动会话必非常驻（常驻走排队），磁盘即权威（domain 内存由
+//      open 时 loadAll 自磁盘播种，之后仅 checkpoint 写，非常驻会话无未落盘增量）。
+//   2. 生命周期守卫：record.identity 的 createdAt/isSeeded 必须与旧 header 一致，防 id
+//      复用场景误改无关生命周期的 record。
+//   3. 当代格式 record（formatVersion === 旧 header.version）优先走官方服务写链
+//      cache.put(id, {...identity, cwd:newCwd}, rows)：domain 写链保证进程内存+磁盘一致，
+//      本次启动的列表立即恢复标题。服务经 ctx.get 动态获取（官方同款、无 inject 门禁，
+//      缺席返回 undefined），旧宿主/服务未激活时自动退化。
+//   4. 其余情况（服务不可用、put 失败、predecessor 旧代 record——旧代 record 不得经 put
+//      重新盖上当前版本戳，否则污染官方版本语义）退化为磁盘原子改写（tmp+rename，只动
+//      identity.cwd，version 戳与 rows 原样保留）：domain 下次启动 loadAll 时生效。
+
+/** 投影缓存 per-record 记录文件路径（键为会话 id，官方 SAFE_KEY_RE 保证路径安全）。 */
+function getProjectionCacheRecordFile(sessionId) {
+  const home = process.env.USERPROFILE || process.env.HOME;
+  return join(home, ".dsh", "storages", "session_projcache", "sessions", encodeSegment(sessionId) + ".json");
+}
+
+/**
+ * 移动成功后把投影缓存 record 的 identity.cwd 换成新工作区路径，保住列表标题提示。
+ * @param c - 注入了 services 的上下文（用 ctx.get 动态取 sessionProjectionCache，可缺席）。
+ * @param {string} sessionId - 会话 ID。
+ * @param {object} oldHeader - 移动前的存储 header（cwd=旧路径；提供 version/createdAt/isSeeded 守卫）。
+ * @param {string} newCwd - 目标工作区路径（与重写后 header.cwd 完全一致）。
+ * @returns {Promise<{repaired: boolean, via?: string, reason?: string}>}
+ */
+async function repairProjectionCacheIdentity(c, sessionId, oldHeader, newCwd) {
+  const file = getProjectionCacheRecordFile(sessionId);
+  let doc;
+  try {
+    doc = JSON.parse(await readFile(file, "utf8"));
+  } catch (err) {
+    if (err && err.code === "ENOENT") return { repaired: false, reason: "no-record" };
+    return { repaired: false, reason: "record-unreadable: " + (err && err.message ? err.message : String(err)) };
+  }
+  const record = doc && doc.record;
+  if (!record || typeof record.identity !== "object" || record.identity === null
+    || typeof record.rows !== "object" || record.rows === null) {
+    return { repaired: false, reason: "record-malformed" };
+  }
+  // 生命周期守卫：只修属于同一会话生命周期的 record
+  if (oldHeader && (record.identity.createdAt !== oldHeader.createdAt
+    || (record.identity.isSeeded ?? false) !== (oldHeader.isSeeded ?? false))) {
+    return { repaired: false, reason: "identity-lifecycle-mismatch" };
+  }
+  if (record.identity.cwd === newCwd) return { repaired: false, reason: "already-current" };
+  const newIdentity = { ...record.identity, cwd: newCwd };
+
+  // 当代格式 record 才能走官方 put()（会重盖当前版本戳）；predecessor 旧代 record 仅磁盘改写
+  const currentFormat = Boolean(oldHeader) && record.identity.formatVersion === oldHeader.version;
+  let cache;
+  try {
+    cache = c && typeof c.get === "function" ? c.get("sessionProjectionCache") : undefined;
+  } catch {
+    cache = undefined;
+  }
+  if (currentFormat && cache && typeof cache.put === "function") {
+    try {
+      await cache.put(sessionId, newIdentity, record.rows);
+      return { repaired: true, via: "service" };
+    } catch (err) {
+      console.warn("[dsh-session-xc] projection-cache put failed for " + sessionId + ", falling back to disk: " + (err && err.message ? err.message : String(err)));
+    }
+  }
+  // 磁盘原子改写兜底：只动 identity.cwd，version 戳与 rows 原样保留（下次启动 loadAll 生效）
+  try {
+    const next = { ...doc, record: { ...record, identity: newIdentity } };
+    const tmp = file + ".tmp";
+    await writeFile(tmp, JSON.stringify(next), "utf8");
+    await rename(tmp, file);
+    return { repaired: true, via: "disk" };
+  } catch (err) {
+    return { repaired: false, reason: "disk-write-failed: " + (err && err.message ? err.message : String(err)) };
+  }
 }
 
 // ========== 排队移动清单（插件自有持久化文件） ==========
@@ -1205,6 +1316,8 @@ export const _internal = {
   loadPendingMoves,
   savePendingMoves,
   enqueuePendingMove,
+  getProjectionCacheRecordFile,
+  repairProjectionCacheIdentity,
   ZSTD_CHECKSUM_OPTIONS,
   autoTitleState,
   cleanTitleText,

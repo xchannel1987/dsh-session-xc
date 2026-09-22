@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.11.1] - 2026-09-22
+
+### Fixed
+- **跨工作区移动后标题丢失：会话在列表里"改名成工作区名、找不到"**。根因：官方会话列表的
+  标题来自 `sessionProjectionCache` 的零 I/O 提示（`cachedSnapshot` / `cachedPredecessorTitle`），
+  其 `lifecycleIdentityMatches` 要求缓存 record 的 identity 与磁盘 header 的
+  createdAt+**cwd**+isSeeded+inheritedEventCount 严格相等。移动只重写了 header.cwd，旧
+  checkpoint record 仍绑定旧 cwd → record 被判"无关生命周期"整体读作不存在 → 列表行没有
+  title 投影 → 客户端 `displayTitleOf` 回退 basename(cwd) = **工作区名**（要等会话被打开
+  一次、投影从日志重折叠并重建 checkpoint 后才自愈）。重启后应用排队移动的场景必现。
+  现 `performSessionMove` 成功后同步修复缓存 record 的 identity.cwd：
+  - 优先走官方服务写链 `sessionProjectionCache.put()`（ctx.get 动态获取，domain 写链保证
+    进程内存+磁盘一致，**本次启动的列表立即恢复标题**）；
+  - 服务不可用 / put 失败 / predecessor 旧格式代 record（不得重盖当前版本戳）时，退化为
+    磁盘原子改写（tmp+rename，只动 identity.cwd，version 戳与 rows 原样保留，下次启动生效）；
+  - 生命周期守卫（createdAt/isSeeded 与旧 header 一致才修）防会话 id 复用误改；全程
+    best-effort，任何失败不影响移动本身。
+
 ## [0.11.0] - 2026-09-11
 
 ### Added

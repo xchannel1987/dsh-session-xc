@@ -44,6 +44,8 @@
 - **常驻排队（v0.8.0）**：DSH 0.1.2+ 中会话一旦被 GUI 打开，Host 即常驻激活该会话
   （关闭标签页不会释放，重启 DSH 才释放）。拖拽这类会话时移动会自动排队并持久化，
   下次重启 DSH 后自动完成，无需额外操作；从未打开过的会话仍然即时移动
+- **标题保留（v0.11.1）**：移动时同步修复官方投影缓存 record 的 identity.cwd，
+  移动/重启后列表标题不再丢失（0.11.0 及以前会回退显示成工作区名，打开会话一次才恢复）
 
 ### 🔍 只看活跃会话（v0.10.0）
 抽屉头部搜索按钮左侧的「只看活跃会话」开关：
@@ -134,6 +136,9 @@ npm install dsh-session-xc
 - **活跃判定（v0.10.0）**：sessions store 的 updatedAt（官方行相对时间同源字段）；行↔会话映射优先读官方组件 React fiber（props.node / props.group.sessions 全集），失败回退标题匹配并 fail-open
 - **移动安全（v0.9.0+）**：兼容 DSH 0.1.5 会话格式代际（`session.jsonl.zstd` / `session.vN.jsonl.zstd`
   多代并存）：移动只重写编号最高代文件的 header 帧，低代历史文件逐字节原样随行
+- **标题提示保留（v0.11.1）**：官方列表标题走 `sessionProjectionCache` 零 I/O 提示，record identity
+  与 header 严格匹配（含 cwd）；移动后同步改写 record 的 identity.cwd（官方 `put()` 写链优先、
+  磁盘原子改写兜底），标题跨移动/重启不丢
 - **RPC 通道（v0.9.0+）**：DSH 0.1.5+ 走 `/api/dsh-session-xc/<endpoint>` 精确路由（复用官方认证围栏），
   transport 失败自动回退旧 `/dsh-session-xc` 通道（0.1.5 的 `connection.rpc.handle` 存在第三方插件
   注册回归，旧通道在 0.1.5 需宿主侧补丁才可用）

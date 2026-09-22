@@ -45,6 +45,10 @@ Drag sessions to target workspace for moving:
   host keeps its agent resident until DSH restarts (closing tabs does not release it).
   Dropping such a session queues the move persistently; it applies automatically on the
   next DSH startup. Sessions never opened still move instantly.
+- **Title Preservation (v0.11.1)**: the move now also repairs the official projection-cache
+  record's identity.cwd, so listing titles survive moves and restarts (before 0.11.1 the
+  title hint was rejected as an unrelated lifecycle and the row fell back to showing the
+  workspace name until the session was opened once).
 
 ### 🔍 Active Sessions Filter (v0.10.0)
 A “show only active sessions” toggle sits left of the drawer search button:
@@ -136,6 +140,10 @@ session meaningfully, using the full first round as context (user prompts + assi
 - **Move safety (v0.9.0+)**: compatible with DSH 0.1.5 session format generations
   (`session.jsonl.zstd` / `session.vN.jsonl.zstd` coexisting in one directory): a move rewrites
   only the numerically highest generation's header frame; older generations ride along untouched
+- **Title hint preservation (v0.11.1)**: official listing titles come from the
+  `sessionProjectionCache` zero-I/O hint, whose record identity must match the header exactly
+  (incl. cwd); a move now rewrites the record's identity.cwd too (official `put()` write chain
+  first, atomic on-disk rewrite as fallback), so titles survive moves and restarts
 - **RPC transport (v0.9.0+)**: on DSH 0.1.5+ endpoints are served under the exact routes
   `/api/dsh-session-xc/<endpoint>` (inheriting the official /api auth fence), with automatic
   fallback to the legacy `/dsh-session-xc` channel (0.1.5's `connection.rpc.handle` has a
