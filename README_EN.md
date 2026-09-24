@@ -9,6 +9,8 @@
 
 **DSH Session Management Enhancement Plugin** — Powerful session management for sidebar workspaces including statistics display, archive recovery, deletion, cross-workspace moving, and automatic first-round session naming.
 
+> **DSH 0.1.7 compatible (`>=0.1.7-rc.1`)**: settings now live on the new **Plugins** page under the `dsh-session-xc` package (`plugins.bundle.config`, same mechanism as modsearch / official subagent).
+
 ## ✨ Core Features
 
 ### 📊 Session Count Statistics

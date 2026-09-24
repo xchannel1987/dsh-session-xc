@@ -28,7 +28,7 @@
 //   面板：已归档会话列表，点击恢复（/dsh-session-xc unarchiveSession RPC）+ toast
 //   拖拽：跨工作区移动会话（拖拽会话行到目标工作区行）
 //   筛选：只看活跃会话（搜索按钮左侧开关，仅显示今天有操作的会话/工作区）
-//   配置："会话增强"设置卡片（settings.plugin.item，官方 PluginCard 同款 UI）：
+//   配置："会话增强"设置卡片（plugins.bundle.config 插件页，DSH>=0.1.7）：
 //     showSessionCount / showArchiveEntry / enableSessionMove / showActiveFilterEntry，live 生效。
 //
 // v0.5.0 修复：
@@ -95,7 +95,9 @@ window.__ModuleLoader__.load({
     var OFFICIAL_SESSION_TITLE_SELECTOR = '[class*="_title"]';
     var OFFICIAL_OVERFLOW_BUTTON_SELECTOR = '[class*="sessionOverflowButton"]';
 
-    var inject = ["connection", "slots", "settingsScope", "sessions", "workspaces"];
+    // DSH >= 0.1.7：客户端 settingsScope 服务更名为 configForms，get(ns) 返回同形态的
+    // 命名空间 scope（getSnapshot/subscribe/set/unset/mutate）；命名空间 id = profile 条目 id。
+    var inject = ["connection", "slots", "configForms", "sessions", "workspaces"];
 
     function resolveSettings(raw) {
       if (raw !== null && typeof raw === "object") {
@@ -142,13 +144,13 @@ window.__ModuleLoader__.load({
         console.error("[dsh-session-xc] sessions 服务不可用: ctx.get(\"sessions\") =", sessionsService);
       }
 
-      // —— 配置（settingsScope 命名空间，live） ——
+      // —— 配置（configForms 命名空间，live） ——
       var config = Object.assign({}, CONFIG_DEFAULTS);
       var settingsScope = null;
       try {
-        var scopeSvc = ctx.get("settingsScope");
-        if (scopeSvc && typeof scopeSvc.bind === "function") {
-          settingsScope = scopeSvc.bind({ namespace: NS });
+        var scopeSvc = ctx.get("configForms");
+        if (scopeSvc && typeof scopeSvc.get === "function") {
+          settingsScope = scopeSvc.get(NS);
           if (settingsScope && typeof settingsScope.getSnapshot === "function") {
             var rawCfg = resolveSettings(settingsScope.getSnapshot());
             if (rawCfg && typeof rawCfg === "object") Object.assign(config, rawCfg);
@@ -166,7 +168,7 @@ window.__ModuleLoader__.load({
             });
           }
         }
-      } catch (e) { /* 无 settingsScope 时配置保持默认 */ }
+      } catch (e) { /* 无 configForms 时配置保持默认 */ }
 
       var countsByTitle = new Map();
       var archiveByTitle = new Map();
@@ -1905,22 +1907,28 @@ window.__ModuleLoader__.load({
         }, 2600);
       }
 
-      // ---------- "会话增强"设置卡片（settings.plugin.item，mobile-xc 同款 UI） ----------
+      // ---------- "会话增强"设置表单（plugins.bundle.config，mobile-xc 同款 UI） ----------
+      // DSH >= 0.1.7：第三方插件配置挂到新「插件页」的 plugins.bundle.config
+      //（参照 modsearch / 官方 subagent；旧 settings.plugin.item 已随 0.1.7 移除）。
 
       function installSettingsCard() {
         try {
           var face = ctx;
           var slots = face.slots;
-          var scopeFace = face.settingsScope;
+          var scopeFace = face.configForms;
           if (!slots || typeof slots.inject !== "function") return;
-          if (!scopeFace || typeof scopeFace.bind !== "function") return;
+          if (!scopeFace || typeof scopeFace.get !== "function") return;
           var cardScope;
-          try { cardScope = scopeFace.bind({ namespace: NS }); } catch (e) { return; }
+          try { cardScope = scopeFace.get(NS); } catch (e) { return; }
           if (!cardScope || typeof cardScope.getSnapshot !== "function" || typeof cardScope.set !== "function") return;
 
-          var CardComponent = function () {
+          var CardComponent = function (props) {
+            // DSH >= 0.1.7 插件页（plugins.bundle.config）以 view='page' 渲染整页表单；
+            // 旧宿主/兜底走折叠卡。
+            var view = props && props.view;
+            var page = view === "page";
             var openState = React.useState(false);
-            var open = openState[0], setOpen = openState[1];
+            var open = page || openState[0], setOpen = openState[1];
             var read = function () {
               try {
                 var v = resolveSettings(cardScope.getSnapshot());
@@ -1966,6 +1974,14 @@ window.__ModuleLoader__.load({
                   React.createElement("span", { className: "dsh-sxc-switch-thumb" }))
               );
             });
+            if (page) {
+              // 插件页整页表单：页头由插件页标题承担，直接渲染字段行（参照 modsearch / subagent）。
+              return React.createElement(
+                "div", { className: "dsh-sxc-pagesec" },
+                React.createElement("h4", { style: { margin: "0 0 8px", fontSize: "14px", lineHeight: "20px", fontWeight: 500, color: "var(--dsw-alias-label-primary,#e2e8f0)" } }, "会话增强"),
+                React.createElement("div", { className: "dsh-sxc-body" }, rows)
+              );
+            }
             return React.createElement(
               "li", { className: "dsh-sxc-card" + (open ? " dsh-sxc-cardOpen" : ""), "data-dstk-card": true },
               React.createElement("button", {
@@ -2000,6 +2016,8 @@ window.__ModuleLoader__.load({
               ".dsh-sxc-chevron{color:var(--dsw-alias-label-tertiary,#8a94a6);flex:none;transition:transform .16s var(--ds-ease-in-out,ease)}",
               ".dsh-sxc-chevronOpen{transform:rotate(180deg)}",
               ".dsh-sxc-body{border-top:1px solid var(--dsw-alias-border-l2,#3b4557);margin:0 16px;padding-bottom:8px}",
+              // 插件页整页表单：去掉卡外壳的左边距（页面上直接平铺）
+              ".dsh-sxc-pagesec .dsh-sxc-body{margin:0;border-top:0;padding-bottom:8px}",
               // —— 开关行：与官方 fields 行同款（12px 上下留白 / border-l2 分隔线） ——
               ".dsh-sxc-srow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid var(--dsw-alias-border-l2,#3b4557);cursor:pointer}",
               ".dsh-sxc-srow:first-child{border-top:none}",
@@ -2013,9 +2031,12 @@ window.__ModuleLoader__.load({
               ".dsh-sxc-switch.on .dsh-sxc-switch-thumb{transform:translateX(16px)}"
             ].join("");
             document.head.appendChild(styleTag);
-            var remove = slots.inject("settings.plugin.item", function* () {
+            // DSH >= 0.1.7：第三方插件配置挂到新「插件页」的 plugins.bundle.config
+            //（keyed，key=npm 包名；参照 modsearch / subagent）。旧 settings.plugin.item
+            // 已随 0.1.7 设置系统重构移除。
+            var remove = slots.inject("plugins.bundle.config", function* () {
               yield slots.register(
-                { name: "settings.plugin.item", key: NS, label: function () { return NS; } },
+                { name: "plugins.bundle.config", key: NS, order: 20 },
                 CardComponent
               );
             });
@@ -2024,7 +2045,7 @@ window.__ModuleLoader__.load({
               if (remove && typeof remove === "function") { try { remove(); } catch (e) { /* ignore */ } }
             };
           }, "dsh-session-xc: plugin config card");
-        } catch (e) { /* 无 slots/settingsScope 时跳过设置卡片 */ }
+        } catch (e) { /* 无 slots/configForms 时跳过设置卡片 */ }
       }
 
       // ---------- 生命周期 ----------

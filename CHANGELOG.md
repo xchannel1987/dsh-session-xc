@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.4] - 2026-09-24
+
+### Changed
+- **设置入口移到新版「插件页」**（与 modsearch、官方 subagent 同款机制）：从
+  `settings.plugin.item` 改挂 `plugins.bundle.config`（keyed，key = `dsh-session-xc`），
+  `view='page'` 时渲染整页配置表单。旧 `settings.plugin.item` 已随 DSH 0.1.7 设置系统重构移除。
+
 ## [0.11.1] - 2026-09-22
 
 ### Fixed

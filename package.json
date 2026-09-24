@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-xc",
-  "version": "0.11.1",
+  "version": "0.11.4",
   "description": "DSH web plugin: 工作区可见会话数 + 已完成未读会话数 + 已归档会话入口与恢复/删除 + 批量删除已归档会话 + 跨工作区移动会话 + 只看活跃会话筛选 + 新会话首轮自动起名（配置：\"会话增强\"设置卡片）。",
   "type": "module",
   "main": "lib/index.js",
@@ -67,7 +67,7 @@
   ],
   "engines": {
     "node": ">=18",
-    "dsh": ">=0.1.2-alpha.3"
+    "dsh": ">=0.1.7-rc.1"
   },
   "scripts": {},
   "devDependencies": {},
