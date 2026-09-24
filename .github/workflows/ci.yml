@@ -11,15 +11,61 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      
-      - run: npm ci
-      
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            echo "无 package-lock.json：本仓库无构建步骤，校验为纯文件比对，跳过依赖安装"
+          fi
+
       - name: Verify lib files exist
         run: |
-          test -f lib/index.js || (echo "lib/index.js not found" && exit 1)
-          test -f lib/client.js || (echo "lib/client.js not found" && exit 1)
+          shopt -s nullglob
+          files=(lib/*.js lib/*.mjs)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "❌ lib/ 下没有任何产物文件"
+            exit 1
+          fi
+          test -f lib/index.js || (echo "❌ lib/index.js not found" && exit 1)
+          test -f lib/client.js || (echo "❌ lib/client.js not found" && exit 1)
+          printf '  %s\n' "${files[@]}"
           echo "✅ All lib files present"
+
+      - name: Verify src mirrors lib
+        run: |
+          shopt -s nullglob
+          fail=0
+          for f in lib/*.js lib/*.mjs; do
+            rel="${f#lib/}"
+            if [ ! -f "src/$rel" ]; then
+              echo "❌ src/$rel 缺失（src/ 必须与 lib/ 同源）"
+              fail=1
+            elif ! cmp -s "$f" "src/$rel"; then
+              echo "❌ src/$rel 与 lib/$rel 不一致"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "lib/ 是权威运行时产物，请以 lib/ 为准同步 src/（本地跑 .\\build.ps1 会自动同步）"
+            exit 1
+          fi
+          echo "✅ src/ 与 lib/ 一致"
+
+      - name: Run unit tests
+        run: |
+          shopt -s nullglob
+          tests=(lib/*.test.mjs lib/*.test.js)
+          if [ ${#tests[@]} -eq 0 ]; then
+            echo "lib/ 下无单元测试文件，跳过"
+            exit 0
+          fi
+          for t in "${tests[@]}"; do
+            echo "== node --test $t =="
+            node --test "$t"
+          done
