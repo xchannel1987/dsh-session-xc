@@ -54,7 +54,7 @@
 ### 🔍 只看活跃会话（v0.10.0）
 抽屉头部搜索按钮左侧的「只看活跃会话」开关：
 
-- **活跃定义**：会话今天有活动（服务端按会话日志文件 mtime 统计，含目标续跑、子代理/后台回报等非人工提问活动；官方 updatedAt 只跟踪人工提问，作为兜底）；归档/subagent 会话不计入
+- **活跃定义**：会话今天有**业务活动**（服务端读取日志尾部最后一条业务事件时间：turn/step/tool/message/job/goal 等，含目标续跑、子代理/后台回报；打开会话产生的 `session/end-seed` 等内部事件不算；官方 updatedAt 只跟踪人工提问，作为兜底）；归档/subagent 会话不计入
 - **一键筛选**：开启后只显示今天有操作的会话及其所在工作区，再次点击恢复完整列表
 - **状态持久化**：开关状态存 localStorage，刷新后保持；按压态有主题蓝底色高亮
 - **与搜索共存**：搜索词非空时筛选自动暂停并恢复完整列表，清空后继续筛选
@@ -137,7 +137,7 @@ npm install dsh-session-xc
 - **工作区数据**：RPC `workspace.list`
 - **会话数据**：RPC `sessions.list`
 - **轮询刷新**：store 订阅 + 页面可见时即时刷新 + 60 秒心跳（v0.10.0 起跨天筛选态自动收敛）
-- **活跃判定（v0.11.6）**：服务端 `listActivity` 按会话日志文件 mtime 统计今天有活动的会话（覆盖目标续跑/子代理回报），官方 sessions store 的 updatedAt（只跟踪人工提问）作为兜底；行↔会话映射优先读官方组件 React fiber（props.node / props.group.sessions 全集），失败回退标题匹配并 fail-open
+- **活跃判定（v0.11.7）**：服务端 `listActivity` 读日志尾部取最后一条业务事件时间（排除 `session/end-seed` 等内部簿记事件），仅用文件 mtime 预筛候选；官方 sessions store 的 updatedAt（只跟踪人工提问）作为兜底；行↔会话映射优先读官方组件 React fiber（props.node / props.group.sessions 全集），失败回退标题匹配并 fail-open
 - **移动安全（v0.9.0+）**：兼容 DSH 0.1.5 会话格式代际（`session.jsonl.zstd` / `session.vN.jsonl.zstd`
   多代并存）：移动只重写编号最高代文件的 header 帧，低代历史文件逐字节原样随行
 - **标题提示保留（v0.11.1）**：官方列表标题走 `sessionProjectionCache` 零 I/O 提示，record identity

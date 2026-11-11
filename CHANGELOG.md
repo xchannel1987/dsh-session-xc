@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.11.7] - 2026-11-11
+
+### Fixed
+- **「只看活跃会话」把“只被打开过”的旧会话误判为今天活跃**：v0.11.6 用会话日志文件 mtime 判活，
+  而打开/迁移/刷新列表会追加内部簿记事件（`session/end-seed` 等）并推进 mtime——即使当天没有任何消息或任务
+  （实测“前端版本分析支持调研”：今天唯一事件是 11:09 的 `session/end-seed`，最后业务事件停在 11-09 09:53:34）。
+  现改为读取日志**尾部**（≤1MB）取最后一条**业务事件**时间：turn/step/tool/message/job/compaction/goal/agent/subagent/…
+  才算活动；`session/end-seed`、`session/title`、`session/title-llm-*`、`permission/preset`、`sandbox/mode`、
+  `approval/policy`、`model/selection`、`subagent/model-selection-policy` 等内部/配置事件排除；
+  文件 mtime 仅用于预筛候选（mtime 早于今天的会话直接跳过），尾部解析失败时 fail-open 回退 mtime。
+
 ## [0.11.6] - 2026-11-11
 
 ### Fixed
