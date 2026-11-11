@@ -55,7 +55,7 @@ Drag sessions to target workspace for moving:
 ### 🔍 Active Sessions Filter (v0.10.0)
 A “show only active sessions” toggle sits left of the drawer search button:
 
-- **Active =** session last activity (updatedAt) falls on the local calendar “today”; archived/subagent sessions excluded
+- **Active =** the session had any activity today (server-side session-log mtime, so goal auto-continuation and subagent/background notices count; the official updatedAt only tracks human prompts and is used as a fallback); archived/subagent sessions excluded
 - **One click** to show only today-active sessions and their workspaces; click again to restore the full list
 - **Persistent** toggle state (localStorage); the pressed style is highlighted in accent blue
 - **Search-friendly**: filtering pauses while a search query is active and resumes once cleared
@@ -118,7 +118,7 @@ session meaningfully, using the full first round as context (user prompts + assi
 
 ### Show Only Active Sessions
 1. Click the funnel button left of the drawer search button (pressed style = accent blue tint)
-2. The list keeps only sessions touched today and their workspaces; collapsed groups that still
+2. The list keeps only sessions with activity today (including goal auto-continuation and subagent/background notices) and their workspaces; collapsed groups that still
    have active sessions stay visible — expand the header to reveal them
 3. Click again to restore the full list; the toggle survives page reloads
 
@@ -135,7 +135,7 @@ session meaningfully, using the full first round as context (user prompts + assi
 - **Session Data**: RPC `sessions.list`
 - **Refresh**: store subscriptions + immediate refresh when page visible + 60s heartbeat
   (since v0.10.0 filter state converges automatically across midnight)
-- **Activity data (v0.10.0)**: `updatedAt` from the sessions store (same field the official
+- **Activity data (v0.11.6)**: the server-side `listActivity` endpoint scans session-log mtime for sessions active today (covers goal rounds / subagent notices), with the official sessions-store `updatedAt` (human prompts only) as fallback. Earlier (v0.10.0) only `updatedAt` was used; the official
   relative-time labels use); row→session mapping reads official components' React fiber
   (`props.node` / `props.group.sessions`, the full set incl. collapsed rows), falling back to
   title matching with fail-open behavior

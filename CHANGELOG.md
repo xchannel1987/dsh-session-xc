@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.6] - 2026-11-11
+
+### Fixed
+- **「只看活跃会话」漏掉“今天有活动、但最近没有人工提问”的会话**（典型：目标自动续跑、子代理/后台回报）：
+  官方会话列表的 `updatedAt = max(header.createdAt, sessionListMetadata.lastPromptAt)` 只跟踪**最近一次人工提问**；
+  目标续跑 `<goal_round>` 与子代理/后台通知虽然今天持续落盘，却不会推进 `lastPromptAt`，这些会话于是被判成
+  “今天不活跃”而隐藏（实测：`Java测试Mock平台调研` 今天 09:28 仍在目标续跑，最后一次人工提问是 11-10 02:57，被漏掉）。
+  现新增服务端端点 `listActivity`：扫描 `~/.dsh/sessions/*/<sessionId>/session*.jsonl(.zstd)` 的 mtime
+  （任何事件落盘都会推进它）生成“今天有活动”的会话表；客户端判活改为 **mtime 今日 || 官方 updatedAt 今日**
+  （旧逻辑兜底，服务不可用时 fail-open）。服务端 5s 短缓存，客户端 30s TTL、筛选开关开启时强制刷新，
+  刷新完成后重跑一次筛选。
+- 设置项提示、README / README_EN / CLAUDE.md 同步更新“活跃”的定义（含目标续跑、子代理/后台回报，不限于人工提问）。
+
 ## [0.11.5] - 2026-09-24
 
 ### Chore
